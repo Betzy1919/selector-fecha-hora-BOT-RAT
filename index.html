@@ -40,15 +40,22 @@
         <label>Minutos</label>
         <ul id="minuto" class="scroll-list"></ul>
       </div>
+      <div class="column">
+        <label>AM/PM</label>
+        <div id="ampm-buttons" class="ampm-selector">
+          <button id="btn-am" class="ampm-button selected" onclick="seleccionarAMPM('AM')">AM</button>
+          <button id="btn-pm" class="ampm-button" onclick="seleccionarAMPM('PM')">PM</button>
+        </div>
+      </div>
     </div>
   </section>
 
   <div class="resumen">
-    <h2>📝 Selección de fecha y hora:   <strong style="font-size: 20px;" id="seleccion">25 Oct 2025 - 17:34</strong></h2>
+    <h2>📝 Selección de fecha y hora:   <strong style="font-size: 20px;" id="seleccion">25 Oct 2025 - 17:34 AM</strong></h2>
   </div>
 
   <div class="botones">
-    <button class="confirmar" onclick="confirmar()">Confirmar</button>
+    <button class="confirmar" onclick="confirmar()">Confirmar Fecha y Hora</button>
     <button class="reset" onclick="restablecer()">Restablecer</button>
   </div>
 
