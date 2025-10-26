@@ -1,0 +1,146 @@
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background-color: #ffffff;
+  color: #333;
+  padding: 20px;
+  max-width: 500px;
+  margin: auto;
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 5px;
+  color: #0057b7;
+  text-align: center;
+
+}
+
+p {
+  font-size: 14px;
+  margin-bottom: 20px;
+  text-align: center;
+
+}
+
+section {
+  margin-bottom: 25px;
+}
+
+h2 {
+  font-size: 16px;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.scroller {
+  display: flex;
+  gap: 10px;
+  
+}
+
+.column {
+  position: relative;
+  flex: 1;
+  text-align: center;
+}
+
+label {
+  font-size: 13px;
+  margin-bottom: 5px;
+  display: block;
+  font-weight: 500;
+}
+
+.scroll-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  height: 120px;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  position: relative;
+}
+
+.scroll-list::-webkit-scrollbar {
+  display: none;
+}
+
+  .scroll-list li {
+    height: 32px;
+    line-height: 43px;
+    font-size: 16px;
+    text-align: center;
+    scroll-snap-align: center;
+    transition: transform 0.2s ease;
+    color: #333;
+    margin: -2;
+  }
+
+
+  .scroll-list li.selected {
+    margin-top: 9px;
+    font-weight: bold;
+    color: #0057b7;
+    box-shadow: 0 0 13px rgba(0,0,0,0.15);
+    height: 42px;
+
+  }
+  
+
+.column::after {
+  content: "";
+  position: absolute;
+  top: 60%;
+  left: 8px;
+  right: 8px;
+  height: 35px;
+  margin-top: -20px;
+  border: 2px solid #0057b7;
+  border-radius: 6px;
+  pointer-events: none;
+  box-shadow: inset 0 0 4px rgba(0,0,0,0.05);
+}
+
+.resumen {
+  background-color: #f0f0f0;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 15px;
+  margin-bottom: 20px;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.15);
+  
+
+}
+
+.botones {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.15);
+}
+
+button {
+  padding: 12px;
+  font-size: 15px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.confirmar {
+  background-color: #0057b7;
+  color: white;
+  font-weight: 500;
+}
+
+.reset {
+  background-color: #ffffff;
+  color: #333;
+  border: 1px solid #ccc;
+}
