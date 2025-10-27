@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="style.css" />
+  <script>
+    window.Telegram.WebApp.ready();
+  </script>
 </head>
 <body>
   <h1>Reporte de Alerta</h1>
@@ -55,6 +58,7 @@
   </div>
 
   <div class="botones">
+    
     <button class="confirmar" onclick="confirmar()">Confirmar Fecha y Hora</button>
     <button class="reset" onclick="restablecer()">Restablecer</button>
   </div>
