@@ -299,7 +299,6 @@ function confirmar() {
     }, 300);
   } else {
     console.log("Telegram WebApp no disponible");
-    alert("Confirmación local: " + texto);
   }
 }
 function restablecer() {
