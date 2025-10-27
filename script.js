@@ -283,11 +283,11 @@ actualizarResumen();
 
 
 function confirmar() {
+  console.log("Texto enviado:", texto);
   const texto = document.getElementById("seleccion").textContent;
 
-  console.log("Texto enviado:", texto); // ✅ ahora sí está definido
-
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
+    console.log("Enviando datos a Telegram:", texto);
     Telegram.WebApp.sendData(texto);
     Telegram.WebApp.close(); // Opcional: cierra el modal
   } else {
