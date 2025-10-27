@@ -283,7 +283,7 @@ actualizarResumen();
 
 
 function confirmar() {
-  console.log("Texto enviado:", texto);
+  
   const texto = document.getElementById("seleccion").textContent;
 
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
