@@ -283,15 +283,15 @@ actualizarResumen();
 
 
 function confirmar() {
+  console.log("Botón confirmar presionado");
+  console.log("Texto enviado:", texto);
   const texto = document.getElementById("seleccion").textContent;
 
-  if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-    console.log("Enviando datos a Telegram:", texto);
+  if (window.Telegram && window.Telegram.WebApp) {
     Telegram.WebApp.sendData(texto);
-    Telegram.WebApp.close(); // Opcional: cierra el modal
+    Telegram.WebApp.close(); // Cierra el modal en móvil
   } else {
-    console.log("Telegram WebApp no disponible");
-    alert("Confirmación local: " + texto);
+    alert("Selección confirmada: " + texto);
   }
 }
 
