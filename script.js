@@ -281,23 +281,27 @@ actualizarResumen();
 });
 }
 
-
 function confirmar() {
-  
   const texto = document.getElementById("seleccion").textContent;
 
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
     console.log("Enviando datos a Telegram:", texto);
+
+    // ✅ Mostrar confirmación visual
+    document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
+
+    // ✅ Enviar datos al bot
     Telegram.WebApp.sendData(texto);
-setTimeout(() => {
-  Telegram.WebApp.close();
-}, 300); // espera 300ms antes de cerrar
+
+    // ✅ Esperar un poco antes de cerrar el WebApp
+    setTimeout(() => {
+      Telegram.WebApp.close();
+    }, 300);
   } else {
     console.log("Telegram WebApp no disponible");
     alert("Confirmación local: " + texto);
   }
 }
-
 function restablecer() {
 // Restablece a la fecha y hora ACTUAL
 inicializar();
