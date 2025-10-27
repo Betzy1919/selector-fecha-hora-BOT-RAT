@@ -289,7 +289,9 @@ function confirmar() {
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
     console.log("Enviando datos a Telegram:", texto);
     Telegram.WebApp.sendData(texto);
-    Telegram.WebApp.close(); // Opcional: cierra el modal
+setTimeout(() => {
+  Telegram.WebApp.close();
+}, 300); // espera 300ms antes de cerrar
   } else {
     console.log("Telegram WebApp no disponible");
     alert("Confirmación local: " + texto);
