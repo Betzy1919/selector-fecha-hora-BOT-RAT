@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="style.css" />
-  <script src="script.js"></script>
   <script>
     window.Telegram.WebApp.ready();
   </script>
@@ -58,7 +57,11 @@
     <h2>📝 Selección de fecha y hora:   <strong style="font-size: 20px;" id="seleccion">25 Oct 2025 - 17:34 AM</strong></h2>
   </div>
 
- 
+  <div class="botones">
+    
+    <button class="confirmar" onclick="confirmar()">Confirmar Fecha y Hora</button>
+    <button class="reset" onclick="restablecer()">Restablecer</button>
+  </div>
 
   <script src="script.js"></script>
 </body>
