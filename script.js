@@ -298,9 +298,10 @@ function confirmar() {
 
     setTimeout(() => {
       Telegram.WebApp.close();
-    }, 600);
+    }, 2000);
   } else {
     alert("Selección confirmada: " + texto);
   }
 }
 document.addEventListener("DOMContentLoaded", inicializar);
+
