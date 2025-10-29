@@ -299,7 +299,7 @@ function confirmar() {
       // que el cliente nativo procese el evento sendData.
       setTimeout(() => {
           Telegram.WebApp.close(); 
-      }, 100); 
+      }, 600); 
 
   } else {
       // Esto se mantiene para pruebas fuera de Telegram
@@ -307,3 +307,4 @@ function confirmar() {
   }
 }
 document.addEventListener("DOMContentLoaded", inicializar);
+
