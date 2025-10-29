@@ -285,25 +285,22 @@ actualizarResumen();
 // script.js (MODIFICAR SOLO ESTA FUNCIÓN)
 
 // script.js (VERSIÓN CON RETRASO PARA CLIENTES NATIVOS)
-
 function confirmar() {
   const texto = document.getElementById("seleccion").textContent;
 
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-      
-      // 1. Envía los datos de forma inmediata.
-      Telegram.WebApp.sendData(texto);
-      
-      // 2. CLAVE: Usar setTimeout para retrasar el cierre de la WebApp.
-      // Un retraso de 100 milisegundos (ms) suele ser suficiente para
-      // que el cliente nativo procese el evento sendData.
-      setTimeout(() => {
-          Telegram.WebApp.close(); 
-      }, 600); 
+    const payload = {
+      fecha: texto.split(" ")[0], // ajusta según tu formato
+      hora: texto.split(" ")[1]   // ajusta según tu formato
+    };
 
+    Telegram.WebApp.sendData(JSON.stringify(payload));
+
+    setTimeout(() => {
+      Telegram.WebApp.close();
+    }, 600);
   } else {
-      // Esto se mantiene para pruebas fuera de Telegram
-      alert("Selección confirmada: " + texto);
+    alert("Selección confirmada: " + texto);
   }
 }
 document.addEventListener("DOMContentLoaded", inicializar);
