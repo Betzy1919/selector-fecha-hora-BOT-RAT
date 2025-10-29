@@ -118,26 +118,6 @@ document.querySelectorAll(`#${campo} li`).forEach(li => {
 });
 }
 
-/** Conversión de 24h (almacenada) a 12h (visualizada en el resumen) */
-function actualizarResumen() {
-let hora24 = parseInt(seleccion.hora, 10);
-
-if (isNaN(hora24) || seleccion.minuto === "" || seleccion.ampm === "") {
-    document.getElementById("seleccion").textContent = "Error de formato de hora.";
-    return;
-}
-
-// La hora12 ya está en la variable "hora" del selector cuando el usuario interactúa
-// Pero para el resumen, la hora12 siempre es el valor de la hora actual en el selector.
-let hora12 = hora24 % 12;
-hora12 = hora12 === 0 ? 12 : hora12; 
-
-const horaStr = String(hora12).padStart(2, "0");
-const ampmStr = seleccion.ampm;
-
-const texto = `${seleccion.dia.trim()} ${seleccion.mes.trim()} ${seleccion.anio.trim()} - ${horaStr}:${seleccion.minuto.trim()} ${ampmStr.trim()}`;
-document.getElementById("seleccion").textContent = texto;
-}
 
 /** Manejo de la selección del botón AM/PM. */
 function seleccionarAMPM(mode) {
@@ -249,59 +229,50 @@ if (items[centralIndex]) {
 
 
 // --- 5. INICIALIZACIÓN GENERAL ---
+function actualizarResumen() {
+  const texto = `${seleccion.dia} ${seleccion.mes} ${seleccion.anio} - ${seleccion.hora}:${seleccion.minuto} ${seleccion.ampm}`;
+  document.getElementById("seleccion").textContent = texto;
 
-function inicializar() {
-
-// Paso 1: Establecer la fecha/hora actual
-inicializarValoresActuales(); 
-
-// Paso 2: Generación de Listas Cíclicas (360° en todos los campos)
-generarLista("dia", generarValoresCiclicos(31, true)); 
-generarLista("mes", generarValoresCiclicosMes()); 
-generarLista("anio", generarValoresCiclicosAnio()); 
-generarLista("hora", generarValoresCiclicosHora12()); // CLAVE: Usar la lista de 12H
-generarLista("minuto", generarValoresCiclicos(60, false));
-
-// Paso 3: Centrar la selección inicial (fecha/hora actual)
-['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(centrarSeleccionInicialCampo);
-seleccionarAMPM(seleccion.ampm); 
-
-actualizarResumen();
-
-// Paso 4: Añadir listeners de scroll
-['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(id => {
-  const ul = document.getElementById(id);
-  ul.addEventListener("scroll", () => {
-    clearTimeout(ul._scrollTimeout);
-    ul._scrollTimeout = setTimeout(() => {
-      detectarElementoCentral(id);
-      manejarScrollCiclico(id, ul); 
-    }, 100);
-  });
-});
+  // CLAVE: Habilitar/Deshabilitar el Main Button si es necesario.
+  if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.MainButton) {
+      if (texto.includes("__:__")) { // Si el formato no está completo
+          Telegram.WebApp.MainButton.hide();
+      } else {
+          Telegram.WebApp.MainButton.setText("✅ Confirmar Fecha y Hora");
+          Telegram.WebApp.MainButton.show();
+      }
+  }
 }
-// script.js (SOLO MODIFICAR ESTA FUNCIÓN)
 
-// script.js (MODIFICAR SOLO ESTA FUNCIÓN)
-
-// script.js (VERSIÓN CON RETRASO PARA CLIENTES NATIVOS)
 function confirmar() {
   const texto = document.getElementById("seleccion").textContent;
 
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-    const payload = {
-      fecha: texto.split(" ")[0], // ajusta según tu formato
-      hora: texto.split(" ")[1]   // ajusta según tu formato
-    };
-
-    Telegram.WebApp.sendData(JSON.stringify(payload));
-
-    setTimeout(() => {
-      Telegram.WebApp.close();
-    }, 2000);
+    // CLAVE: El Main Button se encarga de cerrar la WebApp de forma segura 
+    // después de enviar los datos, eliminando la necesidad de setTimeout.
+    Telegram.WebApp.sendData(texto); 
   } else {
     alert("Selección confirmada: " + texto);
   }
 }
-document.addEventListener("DOMContentLoaded", inicializar);
 
+function inicializar() {
+  // ... (tu lógica existente de generación de listas y listeners) ...
+
+  // ----------------------------------------------------------------
+  // CLAVE: Configuración del Botón Principal de Telegram
+  // ----------------------------------------------------------------
+  if (window.Telegram && window.Telegram.WebApp) {
+      const MainButton = Telegram.WebApp.MainButton;
+      
+      // 1. Asignar el listener de clic a la función confirmar()
+      MainButton.onClick(confirmar);
+
+      // 2. Mostrar el Main Button (el texto y visibilidad se gestionan en actualizarResumen)
+      MainButton.show(); 
+  }
+
+  // ... (el resto de tu inicialización) ...
+}
+
+document.addEventListener("DOMContentLoaded", inicializar);
