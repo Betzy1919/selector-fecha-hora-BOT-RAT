@@ -280,23 +280,24 @@ actualizarResumen();
   });
 });
 }
+// script.js (SOLO MODIFICAR ESTA FUNCIÓN)
+
+// script.js (MODIFICAR SOLO ESTA FUNCIÓN)
+
 function confirmar() {
   const texto = document.getElementById("seleccion").textContent;
 
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
+    
+    // 1. Envía los datos
     Telegram.WebApp.sendData(texto);
-
-    setTimeout(() => {
-      Telegram.WebApp.close();
-    }, 300);
+    
+    // 2. CLAVE: Cierra explícitamente para asegurar que los datos se transmitan
+    Telegram.WebApp.close(); 
+    
   } else {
-    console.log("Telegram WebApp no disponible");
-    alert("Confirmación local: " + texto);
+    // Esto se mantiene para pruebas fuera de Telegram
+    alert("Selección confirmada: " + texto);
   }
 }
-function restablecer() {
-// Restablece a la fecha y hora ACTUAL
-inicializar();
-}
-
 document.addEventListener("DOMContentLoaded", inicializar);
