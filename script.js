@@ -289,22 +289,39 @@ actualizarResumen();
 function confirmar() {
   const texto = document.getElementById("seleccion").textContent;
 
+  // Separar fecha y hora
   const partes = texto.split(" - ");
-  const fecha = partes[0]?.trim();
-  const hora = partes[1]?.trim();
+  const fechaTexto = partes[0]?.trim(); // Ej: "19 Nov 2025"
+  const hora = partes[1]?.trim();       // Ej: "02:25 AM"
 
-  if (!fecha || !hora) {
+  // Validar que ambas partes existan
+  if (!fechaTexto || !hora) {
     alert("⚠️ No se pudo extraer la fecha y hora.");
     return;
   }
 
+  // Convertir "19 Nov 2025" → "19/11/2025"
+  const [dia, mesTexto, anio] = fechaTexto.split(" ");
+  const mesesMap = {
+    Ene: "01", Feb: "02", Mar: "03", Abr: "04", May: "05", Jun: "06",
+    Jul: "07", Ago: "08", Sep: "09", Oct: "10", Nov: "11", Dic: "12"
+  };
+  const mes = mesesMap[mesTexto] || "00";
+  const fecha = `${dia}/${mes}/${anio}`; // Ej: "19/11/2025"
+
+  // Validación final
+  if (mes === "00") {
+    alert("⚠️ Mes inválido. Verifica tu selección.");
+    return;
+  }
+
+  // Enviar al bot como JSON válido
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-    console.log("Enviando datos a Telegram:", { fecha, hora });
+    const payload = { fecha, hora };
+    console.log("✅ Enviando a Telegram:", payload);
 
-    // ✅ Enviar como JSON válido
-    Telegram.WebApp.sendData(JSON.stringify({ fecha, hora }));
+    Telegram.WebApp.sendData(JSON.stringify(payload));
 
-    // ✅ Confirmación visual
     document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
 
     setTimeout(() => {
