@@ -285,51 +285,32 @@ actualizarResumen();
 // script.js (MODIFICAR SOLO ESTA FUNCIÓN)
 
 // script.js (VERSIÓN CON RETRASO PARA CLIENTES NATIVOS)
-
 function confirmar() {
-  const texto = document.getElementById("seleccion").textContent;
-
-  // Separar fecha y hora
-  const partes = texto.split(" - ");
-  const fechaTexto = partes[0]?.trim(); // Ej: "19 Nov 2025"
-  const hora = partes[1]?.trim();       // Ej: "02:25 AM"
-
-  // Validar que ambas partes existan
-  if (!fechaTexto || !hora) {
-    alert("⚠️ No se pudo extraer la fecha y hora.");
-    return;
-  }
-
-  // Convertir "19 Nov 2025" → "19/11/2025"
-  const [dia, mesTexto, anio] = fechaTexto.split(" ");
-  const mesesMap = {
-    Ene: "01", Feb: "02", Mar: "03", Abr: "04", May: "05", Jun: "06",
-    Jul: "07", Ago: "08", Sep: "09", Oct: "10", Nov: "11", Dic: "12"
+  // 1. OBTENER Y CONSTRUIR EL PAYLOAD (Asegúrate de que estas variables estén definidas)
+  const fecha = document.getElementById("input_fecha").value; // Reemplaza con tu lógica de obtener la fecha
+  const hora = document.getElementById("input_hora").value;   // Reemplaza con tu lógica de obtener la hora
+  
+  const payload = { 
+      "fecha": fecha, 
+      "hora": hora   
   };
-  const mes = mesesMap[mesTexto] || "00";
-  const fecha = `${dia}/${mes}/${anio}`; // Ej: "19/11/2025"
+  
+  const dataToSend = JSON.stringify(payload); 
 
-  // Validación final
-  if (mes === "00") {
-    alert("⚠️ Mes inválido. Verifica tu selección.");
-    return;
-  }
-
-  // Enviar al bot como JSON válido
   if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-    const payload = { fecha, hora };
-    console.log("✅ Enviando a Telegram:", payload);
-
-    Telegram.WebApp.sendData(JSON.stringify(payload));
-
-    document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
-
+      
+    // 🛑 DEBUG: Muestra lo que se va a enviar ANTES de intentar enviarlo
+    alert("Intentando enviar JSON: " + dataToSend); 
+    
+    Telegram.WebApp.sendData(dataToSend);
+    
+    // 2. CERRAR CON RETRASO
     setTimeout(() => {
       Telegram.WebApp.close();
-    }, 2000);
+    }, 2000); 
+
   } else {
-    console.log("Telegram WebApp no disponible");
-    alert("Confirmación local: " + texto);
+    alert("ERROR: Objeto Telegram WebApp no disponible.");
   }
 }
 document.addEventListener("DOMContentLoaded", inicializar);
