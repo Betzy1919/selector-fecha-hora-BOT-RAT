@@ -326,7 +326,7 @@ function confirmar() {
 
     setTimeout(() => {
       Telegram.WebApp.close();
-    }, 500);
+    }, 2000);
   } else {
     console.log("Telegram WebApp no disponible");
     alert("Confirmación local: " + texto);
