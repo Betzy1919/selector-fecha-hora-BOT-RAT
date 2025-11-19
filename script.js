@@ -289,21 +289,30 @@ actualizarResumen();
 function confirmar() {
   const texto = document.getElementById("seleccion").textContent;
 
-  if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
-      
-      // 1. Envía los datos de forma inmediata.
-      Telegram.WebApp.sendData(texto);
-      
-      // 2. CLAVE: Usar setTimeout para retrasar el cierre de la WebApp.
-      // Un retraso de 100 milisegundos (ms) suele ser suficiente para
-      // que el cliente nativo procese el evento sendData.
-      setTimeout(() => {
-          Telegram.WebApp.close(); 
-      }, 600); 
+  const partes = texto.split(" - ");
+  const fecha = partes[0]?.trim();
+  const hora = partes[1]?.trim();
 
+  if (!fecha || !hora) {
+    alert("⚠️ No se pudo extraer la fecha y hora.");
+    return;
+  }
+
+  if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
+    console.log("Enviando datos a Telegram:", { fecha, hora });
+
+    // ✅ Enviar como JSON válido
+    Telegram.WebApp.sendData(JSON.stringify({ fecha, hora }));
+
+    // ✅ Confirmación visual
+    document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
+
+    setTimeout(() => {
+      Telegram.WebApp.close();
+    }, 300);
   } else {
-      // Esto se mantiene para pruebas fuera de Telegram
-      alert("Selección confirmada: " + texto);
+    console.log("Telegram WebApp no disponible");
+    alert("Confirmación local: " + texto);
   }
 }
 document.addEventListener("DOMContentLoaded", inicializar);
