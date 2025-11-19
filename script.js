@@ -250,96 +250,86 @@ if (items[centralIndex]) {
 
 // --- 5. INICIALIZACIÓN GENERAL ---
 
-// --- 5. INICIALIZACIÓN GENERAL (MODIFICAR AQUÍ) ---
-
 function inicializar() {
 
-  // Paso 1: Establecer la fecha/hora actual
-  inicializarValoresActuales(); 
+// Paso 1: Establecer la fecha/hora actual
+inicializarValoresActuales(); 
 
-  // Paso 2: Generación de Listas Cíclicas (360° en todos los campos)
-  generarLista("dia", generarValoresCiclicos(31, true)); 
-  generarLista("mes", generarValoresCiclicosMes()); 
-  generarLista("anio", generarValoresCiclicosAnio()); 
-  generarLista("hora", generarValoresCiclicosHora12()); 
-  generarLista("minuto", generarValoresCiclicos(60, false));
+// Paso 2: Generación de Listas Cíclicas (360° en todos los campos)
+generarLista("dia", generarValoresCiclicos(31, true)); 
+generarLista("mes", generarValoresCiclicosMes()); 
+generarLista("anio", generarValoresCiclicosAnio()); 
+generarLista("hora", generarValoresCiclicosHora12()); // CLAVE: Usar la lista de 12H
+generarLista("minuto", generarValoresCiclicos(60, false));
 
-  // Paso 3: Centrar la selección inicial (fecha/hora actual)
-  ['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(centrarSeleccionInicialCampo);
-  seleccionarAMPM(seleccion.ampm); 
+// Paso 3: Centrar la selección inicial (fecha/hora actual)
+['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(centrarSeleccionInicialCampo);
+seleccionarAMPM(seleccion.ampm); 
 
-  actualizarResumen();
+actualizarResumen();
 
-  // Paso 4: Añadir listeners de scroll (mantener tu lógica de scroll)
-  ['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(id => {
-    const ul = document.getElementById(id);
-    ul.addEventListener("scroll", () => {
-      clearTimeout(ul._scrollTimeout);
-      ul._scrollTimeout = setTimeout(() => {
-        detectarElementoCentral(id);
-        manejarScrollCiclico(id, ul); 
-      }, 100);
-    });
+// Paso 4: Añadir listeners de scroll
+['dia', 'mes', 'anio', 'hora', 'minuto'].forEach(id => {
+  const ul = document.getElementById(id);
+  ul.addEventListener("scroll", () => {
+    clearTimeout(ul._scrollTimeout);
+    ul._scrollTimeout = setTimeout(() => {
+      detectarElementoCentral(id);
+      manejarScrollCiclico(id, ul); 
+    }, 100);
   });
-  
-  // 🔑 CLAVE: Inicializar el botón de Telegram al final
-  inicializarMainButton(); 
+});
 }
+// script.js (SOLO MODIFICAR ESTA FUNCIÓN)
 
-document.addEventListener("DOMContentLoaded", inicializar);-
+// script.js (MODIFICAR SOLO ESTA FUNCIÓN)
 
-function inicializarMainButton() {
-  if (window.Telegram && Telegram.WebApp) {
-      // 1. Indicar que el WebApp está listo y mostrar el botón principal
-      Telegram.WebApp.ready();
-      Telegram.WebApp.MainButton.setText("✅ Confirmar Cita").show();
-      
-      // 2. Definir la acción al hacer clic en el MainButton
-      Telegram.WebApp.MainButton.onClick(() => {
-          // El MainButton es más confiable en clientes nativos.
-          // Toda la lógica de extracción, validación, envío y cierre va aquí,
-          // SIN NECESIDAD DE setTimeout.
+// script.js (VERSIÓN CON RETRASO PARA CLIENTES NATIVOS)
 
-          const texto = document.getElementById("seleccion").textContent;
-          
-          // Separar fecha y hora
-          const partes = texto.split(" - ");
-          const fechaTexto = partes[0]?.trim(); // Ej: "19 Nov 2025"
-          const hora = partes[1]?.trim();       // Ej: "02:25 AM"
-      
-          // Validar que ambas partes existan
-          if (!fechaTexto || !hora || fechaTexto.includes("Error")) {
-               Telegram.WebApp.showAlert("⚠️ Por favor, selecciona la fecha y hora correctamente.");
-               return;
-          }
-      
-          // Convertir "19 Nov 2025" → "19/11/2025"
-          const [dia, mesTexto, anio] = fechaTexto.split(" ");
-          const mesesMap = {
-              Ene: "01", Feb: "02", Mar: "03", Abr: "04", May: "05", Jun: "06",
-              Jul: "07", Ago: "08", Sep: "09", Oct: "10", Nov: "11", Dic: "12"
-          };
-          const mes = mesesMap[mesTexto] || "00";
-          const fecha = `${dia}/${mes}/${anio}`; // Ej: "19/11/2025"
-      
-          // Validación final
-          if (mes === "00") {
-              Telegram.WebApp.showAlert("⚠️ Mes inválido. Verifica tu selección.");
-              return;
-          }
-      
-          // 3. Enviar al bot como JSON válido
-          const payload = { fecha, hora };
-          console.log("✅ Enviando a Telegram (MainButton):", payload);
-          
-          Telegram.WebApp.sendData(JSON.stringify(payload));
-          
-          document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
-          
-          // 4. Cerrar la WebApp (inmediato, sin setTimeout)
-          Telegram.WebApp.close();
-      });
+function confirmar() {
+  const texto = document.getElementById("seleccion").textContent;
+
+  // Separar fecha y hora
+  const partes = texto.split(" - ");
+  const fechaTexto = partes[0]?.trim(); // Ej: "19 Nov 2025"
+  const hora = partes[1]?.trim();       // Ej: "02:25 AM"
+
+  // Validar que ambas partes existan
+  if (!fechaTexto || !hora) {
+    alert("⚠️ No se pudo extraer la fecha y hora.");
+    return;
+  }
+
+  // Convertir "19 Nov 2025" → "19/11/2025"
+  const [dia, mesTexto, anio] = fechaTexto.split(" ");
+  const mesesMap = {
+    Ene: "01", Feb: "02", Mar: "03", Abr: "04", May: "05", Jun: "06",
+    Jul: "07", Ago: "08", Sep: "09", Oct: "10", Nov: "11", Dic: "12"
+  };
+  const mes = mesesMap[mesTexto] || "00";
+  const fecha = `${dia}/${mes}/${anio}`; // Ej: "19/11/2025"
+
+  // Validación final
+  if (mes === "00") {
+    alert("⚠️ Mes inválido. Verifica tu selección.");
+    return;
+  }
+
+  // Enviar al bot como JSON válido
+  if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.sendData) {
+    const payload = { fecha, hora };
+    console.log("✅ Enviando a Telegram:", payload);
+
+    Telegram.WebApp.sendData(JSON.stringify(payload));
+
+    document.getElementById("seleccion").textContent = "✅ Fecha confirmada";
+
+    setTimeout(() => {
+      Telegram.WebApp.close();
+    }, 2000);
+  } else {
+    console.log("Telegram WebApp no disponible");
+    alert("Confirmación local: " + texto);
   }
 }
-// ------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", inicializar);
