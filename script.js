@@ -1,6 +1,3 @@
-// Asegúrate de que este script esté enlazado en tu index.html
-// <script src="script.js"></script>
-
 // --- 1. Inicializar con Fecha/Hora Actual y Listeners ---
 function inicializarValoresActuales() {
     const input = document.getElementById("fechaHora");
@@ -8,17 +5,16 @@ function inicializarValoresActuales() {
     
     // Formato requerido por <input type="datetime-local"> es YYYY-MM-DDTHH:MM
     const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0'); // Mesi: 0-11
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
     const hh = String(now.getHours()).padStart(2, '0');
     const min = String(now.getMinutes()).padStart(2, '0');
     
     const valorInicial = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
     
-    // 1. Establecer el valor inicial
     input.value = valorInicial;
     
-    // 2. Agregar el listener 'change' (detecta la selección del usuario)
+    // 2. Agregar el listener 'change' (Detecta la selección del usuario)
     input.addEventListener('change', actualizarResumen);
 }
 
@@ -36,57 +32,73 @@ function actualizarResumen() {
         const texto = `✅ Seleccionado: ${fecha.trim()} a las ${hora.trim()}`;
         document.getElementById("seleccion").textContent = texto;
         
-        // HABILITAR el MainButton si hay un valor válido
+        // HABILITAR el MainButton
         Telegram.WebApp.MainButton.enable();
     } else {
         document.getElementById("seleccion").textContent = "Error: Por favor, selecciona la fecha y hora.";
-        // DESHABILITAR el MainButton si no hay valor
+        // DESHABILITAR el MainButton
         Telegram.WebApp.MainButton.disable();
     }
 }
 
 
 // --- 3. LÓGICA DE CONFIRMACIÓN FINAL (Envío de Datos y Cierre Reforzado) ---
-// --- 4. LÓGICA DE CONFIRMACIÓN FINAL ---
 function inicializarMainButton() {
     if (window.Telegram && Telegram.WebApp) {
         
         Telegram.WebApp.ready();
         
-        // 🔑 CLAVE: ESTA LÍNEA MUESTRA EL BOTÓN FISICAMENTE
+        // 🔑 CLAVE 1: Mostrar el botón inmediatamente para garantizar su visibilidad
         Telegram.WebApp.MainButton.setText("✅ Confirmar Cita").show(); 
         
-        // El resto del código de onClick() es para manejar la acción
         Telegram.WebApp.MainButton.onClick(() => {
-            // ... (Lógica de showProgress, getElementById("fechaHora").value, sendData, y setTimeout(close)) ...
+            
+            Telegram.WebApp.MainButton.showProgress(); // Muestra el spinner
+            
+            const valorInput = document.getElementById("fechaHora").value; 
+            
+            if (!valorInput) {
+                Telegram.WebApp.showAlert("⚠️ Por favor, selecciona la fecha y hora.");
+                Telegram.WebApp.MainButton.hideProgress();
+                return;
+            }
+
+            // El payload va con fecha y hora separadas, en formato ISO (YYYY-MM-DD y HH:MM)
+            const [fecha, hora] = valorInput.split('T'); 
+            const payload = { fecha, hora }; 
+            
+            // 1. Enviar los datos.
+            Telegram.WebApp.sendData(JSON.stringify(payload));
+            
+            document.getElementById("seleccion").textContent = "✅ Enviando datos... Cerrando WebApp...";
+
+            Telegram.WebApp.MainButton.hideProgress();
+            
+            // 2. 🔑 CLAVE 2: Retraso de 1.5 segundos CRUCIAL para la App nativa de Telegram
+            setTimeout(() => {
+                Telegram.WebApp.close();
+            }, 1500); 
+
         });
     }
 }
 
 
-// --- 5. INICIALIZACIÓN PRINCIPAL ---
-
-// --- 3. INICIALIZACIÓN PRINCIPAL ---
+// --- 4. INICIALIZACIÓN PRINCIPAL (Punto de Entrada) ---
 
 function inicializar() {
-    // Es crucial verificar si Telegram WebApp está disponible
     if (window.Telegram && Telegram.WebApp) {
         
         // 1. Inicializa el campo nativo y sus listeners
         inicializarValoresActuales(); 
         
-        // 2. 🔑 CLAVE: Define y muestra el MainButton de Telegram
+        // 2. Configura el MainButton
         inicializarMainButton(); 
         
-        // 3. Establece el estado inicial del botón (visible, pero deshabilitado hasta seleccionar algo)
+        // 3. Establece el estado inicial del botón (visible, deshabilitado/habilitado)
         actualizarResumen(); 
-    } else {
-        // Mensaje de fallback si no está en Telegram
-        console.error("Telegram WebApp API no disponible. Ejecutar en el bot.");
-        document.getElementById("seleccion").textContent = "Error: Carga esta página dentro de Telegram.";
     }
 }
 
 // Inicia todo al cargar el contenido de la página
 document.addEventListener("DOMContentLoaded", inicializar);
-
