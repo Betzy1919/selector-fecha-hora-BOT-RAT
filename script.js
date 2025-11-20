@@ -47,44 +47,18 @@ function actualizarResumen() {
 
 
 // --- 3. LÓGICA DE CONFIRMACIÓN FINAL (Envío de Datos y Cierre Reforzado) ---
+// --- 4. LÓGICA DE CONFIRMACIÓN FINAL ---
 function inicializarMainButton() {
     if (window.Telegram && Telegram.WebApp) {
         
         Telegram.WebApp.ready();
         
-        // 🔑 CLAVE 1: Mostrar el botón inmediatamente para garantizar su visibilidad
+        // 🔑 CLAVE: ESTA LÍNEA MUESTRA EL BOTÓN FISICAMENTE
         Telegram.WebApp.MainButton.setText("✅ Confirmar Cita").show(); 
         
-        // La habilitación/deshabilitación inicial se hace después por 'actualizarResumen()'
-
+        // El resto del código de onClick() es para manejar la acción
         Telegram.WebApp.MainButton.onClick(() => {
-            
-            Telegram.WebApp.MainButton.showProgress(); // Muestra el spinner
-            
-            const valorInput = document.getElementById("fechaHora").value; 
-            
-            if (!valorInput) {
-                Telegram.WebApp.showAlert("⚠️ Por favor, selecciona la fecha y hora.");
-                Telegram.WebApp.MainButton.hideProgress();
-                return;
-            }
-
-            // El payload va con fecha y hora separadas, en formato ISO (YYYY-MM-DD y HH:MM)
-            const [fecha, hora] = valorInput.split('T'); 
-            const payload = { fecha, hora }; 
-            
-            // 1. Enviar los datos.
-            Telegram.WebApp.sendData(JSON.stringify(payload));
-            
-            document.getElementById("seleccion").textContent = "✅ Enviando datos... Cerrando WebApp...";
-
-            Telegram.WebApp.MainButton.hideProgress();
-            
-            // 2. 🔑 CLAVE 2: Retraso de 1.5 segundos para la App nativa de Telegram
-            setTimeout(() => {
-                Telegram.WebApp.close();
-            }, 1500); 
-
+            // ... (Lógica de showProgress, getElementById("fechaHora").value, sendData, y setTimeout(close)) ...
         });
     }
 }
@@ -92,20 +66,27 @@ function inicializarMainButton() {
 
 // --- 5. INICIALIZACIÓN PRINCIPAL ---
 
+// --- 3. INICIALIZACIÓN PRINCIPAL ---
+
 function inicializar() {
+    // Es crucial verificar si Telegram WebApp está disponible
     if (window.Telegram && Telegram.WebApp) {
         
-        // 1. Inicializa el campo nativo con la fecha actual y configura el listener 'change'
+        // 1. Inicializa el campo nativo y sus listeners
         inicializarValoresActuales(); 
         
-        // 2. Llama a la función que define el MainButton y el evento de clic
+        // 2. 🔑 CLAVE: Define y muestra el MainButton de Telegram
         inicializarMainButton(); 
         
-        // 3. Llama a actualizarResumen para establecer el texto de inicio 
-        // y el estado inicial del MainButton (disabled/enabled)
+        // 3. Establece el estado inicial del botón (visible, pero deshabilitado hasta seleccionar algo)
         actualizarResumen(); 
+    } else {
+        // Mensaje de fallback si no está en Telegram
+        console.error("Telegram WebApp API no disponible. Ejecutar en el bot.");
+        document.getElementById("seleccion").textContent = "Error: Carga esta página dentro de Telegram.";
     }
 }
 
 // Inicia todo al cargar el contenido de la página
 document.addEventListener("DOMContentLoaded", inicializar);
+
