@@ -1,68 +1,8 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <title>Reporte de Alerta</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css" />
-  <script>
-    window.Telegram.WebApp.ready();
-  </script>
-</head>
-<body>
-  <h1>Reporte de Alerta</h1>
-  <p>Selecciona la fecha y hora del evento</p>
+<div class="picker-container">
+    <label for="fechaHora" style="font-size: 1.2em; color: #555;">Selecciona Fecha y Hora:</label>
+    <input type="datetime-local" id="fechaHora" class="native-input">
+</div>
 
-  <section>
-    <h2>📅 Fecha del Evento</h2>
-    <div class="scroller">
-      <div class="column">
-        <label>Día</label>
-        <ul id="dia" class="scroll-list"></ul>
-      </div>
-      <div class="column">
-        <label>Mes</label>
-        <ul id="mes" class="scroll-list"></ul>
-      </div>
-      <div class="column">
-        <label>Año</label>
-        <ul id="anio" class="scroll-list"></ul>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <h2>⏰ Hora del Evento</h2>
-    <div class="scroller">
-      <div class="column">
-        <label>Hora</label>
-        <ul id="hora" class="scroll-list"></ul>
-      </div>
-      <div class="column">
-        <label>Minutos</label>
-        <ul id="minuto" class="scroll-list"></ul>
-      </div>
-      <div class="column">
-        <label>AM/PM</label>
-        <div id="ampm-buttons" class="ampm-selector">
-          <button id="btn-am" class="ampm-button selected" onclick="seleccionarAMPM('AM')">AM</button>
-          <button id="btn-pm" class="ampm-button" onclick="seleccionarAMPM('PM')">PM</button>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div class="resumen">
-    <h2>📝 Selección de fecha y hora:   <strong style="font-size: 20px;" id="seleccion">25 Oct 2025 - 17:34 AM</strong></h2>
-  </div>
-
-  <div class="botones">
-    
-    <button class="confirmar" onclick="confirmar()">Confirmar Fecha y Hora</button>
-    <button class="reset" onclick="restablecer()">Restablecer</button>
-  </div>
-
-  <script src="script.js"></script>
-</body>
-</html>
+<div id="seleccion" class="summary-box">
+    Esperando selección...
+</div>
