@@ -1,200 +1,48 @@
 body {
-  font-family: 'Segoe UI', sans-serif;
-  background-color: #ffffff;
-  color: #333;
-  padding: 20px;
-  max-width: 500px;
-  margin: auto;
+    background-color: var(--tg-theme-bg-color, #ffffff); /* Usa el color de fondo de Telegram */
+    color: var(--tg-theme-text-color, #000000); /* Usa el color de texto de Telegram */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    padding: 20px;
 }
 
-h1 {
-  font-size: 22px;
-  font-weight: 600;
-  margin-bottom: 5px;
-  color: #0057b7;
-  text-align: center;
-
+/* Estilos para el contenedor del input */
+.input-container {
+    text-align: center;
+    margin-bottom: 25px;
 }
 
-p {
-  font-size: 14px;
-  margin-bottom: 20px;
-  text-align: center;
-
+.input-label {
+    display: block;
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--tg-theme-hint-color, #999); /* Color de pista de Telegram */
+    margin-bottom: 10px;
 }
 
-section {
-  margin-bottom: 25px;
+/* Estilo principal para el input nativo */
+.native-datetime-input {
+    width: 90%; /* Ancho responsivo */
+    max-width: 350px;
+    padding: 15px;
+    font-size: 1.2em;
+    border: 2px solid var(--tg-theme-button-color, #5ac8fa); /* Borde con color de botón de Telegram */
+    border-radius: 12px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    background-color: var(--tg-theme-secondary-bg-color, #f0f0f0); /* Fondo secundario de Telegram */
+    color: var(--tg-theme-text-color, #000000);
+    text-align: center;
+    /* Esto es importante para que el texto se vea centrado */
+    line-height: 1.5;
 }
 
-h2 {
-  font-size: 16px;
-  margin-bottom: 10px;
-  font-weight: 500;
+/* Estilos para el resumen/estado */
+.summary-box {
+    margin-top: 20px;
+    padding: 10px;
+    border: 1px dashed var(--tg-theme-link-color, #007aff);
+    border-radius: 8px;
+    text-align: center;
+    font-weight: 500;
+    color: var(--tg-theme-text-color, #000000);
 }
 
-.scroller {
-  display: flex;
-  gap: 10px;
-  
-}
-
-.column {
-  position: relative;
-  flex: 1;
-  text-align: center;
-}
-
-label {
-  font-size: 13px;
-  margin-bottom: 5px;
-  display: block;
-  font-weight: 500;
-}
-
-.scroll-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  height: 120px;
-  overflow-y: auto;
-  scroll-snap-type: y mandatory;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  background-color: #f9f9f9;
-  border-radius: 8px;
-  border: 1px solid #ccc;
-  position: relative;
-}
-
-.scroll-list::-webkit-scrollbar {
-  display: none;
-}
-
-.scroll-list li {
-  height: 40px;          
-  line-height: 40px;     
-  font-size: 15px; /* Tono de gris y fuente más pequeña para los no seleccionados */
-  text-align: center;
-  scroll-snap-align: center;
-  transition: transform 0.2s ease, font-size 0.2s ease, color 0.2s ease; /* Transición suave */
-  color: #999; /* Color gris suave para los no seleccionados */
-  margin: 0;
-  /* IMPORTANTE: Desactivar la selección de texto para mejor UX */
-  user-select: none;
-}
-
-
-.scroll-list li.selected {
-  font-weight: bold;
-  color: #0057b7; /* Color azul */
-  font-size: 16px; /* Tamaño de fuente más grande */
-  transform: scale(1.15); /* Efecto de zoom: 15% más grande */
-  /* NO necesitamos border ni box-shadow aquí, ya lo hace el ::after del .column */
-}
-
-.column::after {
-  content: "";
-  position: absolute;
-  top: 58%;
-  left: 9px;
-  right: 8px;
-  height: 34px;
-  margin-top: -20px;
-  border: 2px solid #0057b7;
-  border-radius: 6px;
-  pointer-events: none;
-  box-shadow: inset 0 0 4px rgba(0,0,0,0.05);
-}
-
-.resumen {
-  background-color: #f0f0f0;
-  padding: 12px;
-  border-radius: 6px;
-  font-size: 15px;
-  margin-bottom: 20px;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.15);
-  
-
-}
-
-.botones {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.15);
-}
-
-button {
-  padding: 12px;
-  font-size: 15px;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.confirmar {
-  background-color: #0057b7;
-  color: white;
-  font-weight: 500;
-}
-
-.reset {
-  background-color: #ffffff;
-  color: #333;
-  border: 1px solid #ccc;
-}
-
-/* style.css (ADICIONES) */
-
-/* Contenedor de botones AM/PM */
-.ampm-selector {
-  display: flex; /* Asegura que los botones estén en línea */
-  justify-content: center;
-  align-items: center;
-  height: 120px; /* Misma altura que scroll-list */
-  gap: 5px;
-  position: relative;
-  /* Esto es CLAVE para eliminar el borde azul que se aplica a .column::after */
-  pointer-events: none; /* Evita que el ::after interfiera */
-}
-
-/* NO queremos el borde azul en el selector AM/PM, así que lo sobreescribimos */
-.ampm-selector::after {
-  content: none !important; 
-}
-
-.ampm-button {
-  background-color: #f0f0f0;
-  border: 1px solid #ccc;
-  padding: 10px 15px;
-  font-size: 16px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background-color 0.2s, border-color 0.2s;
-  pointer-events: auto; /* Permite que los botones sean clickeables */
-}
-
-.ampm-buttons button {
-    background-color: #f0f0f0;
-    border: 1px solid #ccc;
-    padding: 10px 15px;
-    font-size: 16px;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: background-color 0.2s, border-color 0.2s;
-}
-
-/* Estilo para el botón AM/PM seleccionado (Esto es lo que lo marca en azul) */
-.ampm-button.selected {
-  background-color: #0057b7;
-  color: white;
-  border-color: #0057b7;
-  font-weight: bold;
-}
-/* Asegúrate de que el contenedor de todos los selectores 'scroller' sea 'display: flex' */
-.scroller {
-    display: flex;
-    justify-content: space-around;
-    gap: 10px;
-}
