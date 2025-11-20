@@ -1,47 +1,111 @@
-body {
-    background-color: var(--tg-theme-bg-color, #ffffff); /* Usa el color de fondo de Telegram */
-    color: var(--tg-theme-text-color, #000000); /* Usa el color de texto de Telegram */
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-    padding: 20px;
+// Asegúrate de que este script esté enlazado en tu index.html
+// <script src="script.js"></script>
+
+// --- 1. Inicializar con Fecha/Hora Actual y Listeners ---
+function inicializarValoresActuales() {
+    const input = document.getElementById("fechaHora");
+    const now = new Date();
+    
+    // Formato requerido por <input type="datetime-local"> es YYYY-MM-DDTHH:MM
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0'); // Mesi: 0-11
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    
+    const valorInicial = `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+    
+    // 1. Establecer el valor inicial
+    input.value = valorInicial;
+    
+    // 2. Agregar el listener 'change' (detecta la selección del usuario)
+    input.addEventListener('change', actualizarResumen);
 }
 
-/* Estilos para el contenedor del input */
-.input-container {
-    text-align: center;
-    margin-bottom: 25px;
+// --- 2. Función de Actualización (Habilita/Deshabilita el MainButton) ---
+function actualizarResumen() {
+    if (!window.Telegram || !Telegram.WebApp) return;
+
+    const input = document.getElementById("fechaHora");
+    const valor = input.value; // Formato: YYYY-MM-DDTHH:MM
+    
+    if (valor) {
+        // Formato para mostrar al usuario
+        const [fecha, hora] = valor.split('T'); 
+        
+        const texto = `✅ Seleccionado: ${fecha.trim()} a las ${hora.trim()}`;
+        document.getElementById("seleccion").textContent = texto;
+        
+        // HABILITAR el MainButton si hay un valor válido
+        Telegram.WebApp.MainButton.enable();
+    } else {
+        document.getElementById("seleccion").textContent = "Error: Por favor, selecciona la fecha y hora.";
+        // DESHABILITAR el MainButton si no hay valor
+        Telegram.WebApp.MainButton.disable();
+    }
 }
 
-.input-label {
-    display: block;
-    font-size: 1.1em;
-    font-weight: 600;
-    color: var(--tg-theme-hint-color, #999); /* Color de pista de Telegram */
-    margin-bottom: 10px;
+
+// --- 3. LÓGICA DE CONFIRMACIÓN FINAL (Envío de Datos y Cierre Reforzado) ---
+function inicializarMainButton() {
+    if (window.Telegram && Telegram.WebApp) {
+        
+        Telegram.WebApp.ready();
+        
+        // 🔑 CLAVE 1: Mostrar el botón inmediatamente para garantizar su visibilidad
+        Telegram.WebApp.MainButton.setText("✅ Confirmar Cita").show(); 
+        
+        // La habilitación/deshabilitación inicial se hace después por 'actualizarResumen()'
+
+        Telegram.WebApp.MainButton.onClick(() => {
+            
+            Telegram.WebApp.MainButton.showProgress(); // Muestra el spinner
+            
+            const valorInput = document.getElementById("fechaHora").value; 
+            
+            if (!valorInput) {
+                Telegram.WebApp.showAlert("⚠️ Por favor, selecciona la fecha y hora.");
+                Telegram.WebApp.MainButton.hideProgress();
+                return;
+            }
+
+            // El payload va con fecha y hora separadas, en formato ISO (YYYY-MM-DD y HH:MM)
+            const [fecha, hora] = valorInput.split('T'); 
+            const payload = { fecha, hora }; 
+            
+            // 1. Enviar los datos.
+            Telegram.WebApp.sendData(JSON.stringify(payload));
+            
+            document.getElementById("seleccion").textContent = "✅ Enviando datos... Cerrando WebApp...";
+
+            Telegram.WebApp.MainButton.hideProgress();
+            
+            // 2. 🔑 CLAVE 2: Retraso de 1.5 segundos para la App nativa de Telegram
+            setTimeout(() => {
+                Telegram.WebApp.close();
+            }, 1500); 
+
+        });
+    }
 }
 
-/* Estilo principal para el input nativo */
-.native-datetime-input {
-    width: 90%; /* Ancho responsivo */
-    max-width: 350px;
-    padding: 15px;
-    font-size: 1.2em;
-    border: 2px solid var(--tg-theme-button-color, #5ac8fa); /* Borde con color de botón de Telegram */
-    border-radius: 12px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    background-color: var(--tg-theme-secondary-bg-color, #f0f0f0); /* Fondo secundario de Telegram */
-    color: var(--tg-theme-text-color, #000000);
-    text-align: center;
-    /* Esto es importante para que el texto se vea centrado */
-    line-height: 1.5;
+
+// --- 5. INICIALIZACIÓN PRINCIPAL ---
+
+function inicializar() {
+    if (window.Telegram && Telegram.WebApp) {
+        
+        // 1. Inicializa el campo nativo con la fecha actual y configura el listener 'change'
+        inicializarValoresActuales(); 
+        
+        // 2. Llama a la función que define el MainButton y el evento de clic
+        inicializarMainButton(); 
+        
+        // 3. Llama a actualizarResumen para establecer el texto de inicio 
+        // y el estado inicial del MainButton (disabled/enabled)
+        actualizarResumen(); 
+    }
 }
 
-/* Estilos para el resumen/estado */
-.summary-box {
-    margin-top: 20px;
-    padding: 10px;
-    border: 1px dashed var(--tg-theme-link-color, #007aff);
-    border-radius: 8px;
-    text-align: center;
-    font-weight: 500;
-    color: var(--tg-theme-text-color, #000000);
-}
+// Inicia todo al cargar el contenido de la página
+document.addEventListener("DOMContentLoaded", inicializar);
