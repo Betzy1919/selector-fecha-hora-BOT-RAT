@@ -1,0 +1,581 @@
+import logging
+logger = logging.getLogger("AlertasTempranasBot")
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from telegram.ext import (ContextTypes )
+
+from configuracion.constantes import (
+    ESTADO_RESUMEN, ESTADO_MODIFICAR, ESTADO_NIVEL,ESTADO_TIPO_REPORTE,ESTADO_TIPO_EVENTO,ESTADO_DESCRIPCION_EVENTO,ESTADO_ACCIONES_TOMADAS,
+    ESTADO_RECURSOS_COMPROMETIDOS,ESTADO_TIPO_MEDIO,ESTADO_NOMBRE_MEDIO,ESTADO_CONTENIDO_DIFUNDIDO,ESTADO_AUDIENCIA_AFECTADA,ESTADO_VIOLENCIA,
+    ESTADO_AMENAZA,ESTADO_VERIFICADO,ESTADO_OBSERVACIONES,ESTADO_ESPERANDO_MULTIMEDIA,ESTADO_CONFIRMACION_MODIFICACION,ESTADO_TIPO_EVENTO_COMUNICACIONAL,
+    ESTADO_ACTORES_CLAVE,ESTADO_ACCIONES,ESTADO_RECURSOS,ESTADO_FECHA_PUBLICACION
+)
+from handlers.utils import(
+    generar_codigo_reporte,opciones_evento_critico,opciones_evento_verde_operacional,opciones_evento_verde_comunicacional,borrar_pregunta_anterior,
+    construir_resumen_parcial,eliminar_estado_del_historial,merge_keyboard_with_navigation
+    ) 
+from .conversacion import preguntar_fecha_manual,preguntar_fecha_webapp
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< pasar_a_resumen >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def pasar_a_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el botón de continuar y pasa al resumen."""
+            # <<<<<<<<<<<<<<<< BLOQUE MODIFICACIÓN >>>>>>>>>>>>>>>>>
+    if context.user_data.get("en_modo_modificacion"):
+        del context.user_data["en_modo_modificacion"]  # Desactivamos la bandera
+        return await manejar_confirmacion_modificacion(update, context)
+    # <<<<<<<<<<<<<<<< FIN DEL BLOQUE MODIFICACIÓN >>>>>>>>>>>>>>>>>
+    query = update.callback_query
+    await query.answer()
+    
+    # Genera el código del reporte solo una vez antes de mostrar el resumen
+    if "codigo_reporte" not in context.user_data:
+        context.user_data["codigo_reporte"] = generar_codigo_reporte(
+            context.user_data["nivel"], context.user_data["tipo_reporte"]
+        )
+
+    return await mostrar_resumen(update, context)
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< mostrar_resumen >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def mostrar_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    resumen_text = "<b>Resumen del reporte</b>\n\n"
+    resumen_text += construir_resumen_parcial(context)
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Enviar reporte", callback_data="enviar_reporte")],
+        [InlineKeyboardButton("✏️ Modificar reporte", callback_data="modificar_reporte")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_reporte")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.callback_query.message.reply_text(resumen_text, reply_markup=reply_markup, parse_mode="HTML")
+    return ESTADO_RESUMEN
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< manejar_modificar_reporte >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+# handlers/conversacion.py
+
+async def manejar_modificar_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la acción de modificar el reporte y muestra las opciones según el tipo y nivel de reporte."""
+    query = update.callback_query
+    await query.answer()
+    
+    # --- 1. LIMPIEZA DE MENSAJES DEL RESUMEN FINAL ---
+    
+    # Borrar la pregunta anterior (la confirmación, que ya haces)
+    await borrar_pregunta_anterior(context, update) 
+
+    # 🚨 FIX CLAVE 1: Borrar el mensaje de botones finales (la pregunta que se queda en el historial)
+    mensaje_botones_id = context.user_data.pop("mensaje_botones_finales_id", None)
+    if mensaje_botones_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, 
+                message_id=mensaje_botones_id
+            )
+        except Exception:
+            pass # Ignoramos si ya fue borrado
+
+    # Borrar el mensaje estático del resumen (el texto grande)
+    resumen_id = context.user_data.pop("resumen_id", None)
+    if resumen_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, 
+                message_id=resumen_id
+            )
+        except Exception:
+            pass # Ignoramos si ya fue borrado
+
+
+    # --- 2. CONFIGURACIÓN Y LIMPIEZA DE HISTORIAL ---
+    
+    # ✅ Limpieza radical del historial (Para empezar desde cero la navegación)
+    context.user_data["history_stack"] = []
+    context.user_data["modificando_desde_resumen"] = True
+
+    tipo_reporte = context.user_data.get("tipo_reporte")
+    nivel = context.user_data.get("nivel")
+
+    # --- 3. CONSTRUCCIÓN DEL MENÚ DE MODIFICACIÓN (El resto del código se mantiene) ---
+    
+    # Lista de botones base que siempre se muestran
+    keyboard = [
+        [InlineKeyboardButton("Tipo de evento", callback_data="mod_tipo_evento")],
+    ]
+    
+    # Agregar preguntas según el flujo (operacional vs comunicacional)
+    if tipo_reporte == "operacional":
+        if nivel == "Verde":
+            keyboard.extend([
+                [InlineKeyboardButton("Descripción del evento", callback_data="mod_descripcion_evento")],
+                [InlineKeyboardButton("Fecha y hora del evento", callback_data="mod_fecha_hora")],
+                [InlineKeyboardButton("Actores clave", callback_data="mod_actores_clave")],
+                [InlineKeyboardButton("Acciones tomadas", callback_data="mod_acciones_tomadas")],
+            ])
+        elif nivel in ["Amarilla", "Naranja"]:
+            keyboard.extend([
+                [InlineKeyboardButton("Descripción del evento", callback_data="mod_descripcion_evento")],
+                [InlineKeyboardButton("Fecha y hora del evento", callback_data="mod_fecha_hora")],
+                [InlineKeyboardButton("Actores clave", callback_data="mod_actores_clave")],
+                [InlineKeyboardButton("Recursos comprometidos", callback_data="mod_recursos_comprometidos")],
+                [InlineKeyboardButton("Acciones tomadas", callback_data="mod_acciones_tomadas")],
+                [InlineKeyboardButton("Violencia", callback_data="mod_violencia")],
+                [InlineKeyboardButton("Amenaza de vida", callback_data="mod_amenaza")],
+            ])
+        elif nivel == "Roja":
+            keyboard.extend([
+                [InlineKeyboardButton("Violencia", callback_data="mod_violencia")],
+                [InlineKeyboardButton("Amenaza de vida", callback_data="mod_amenaza")],
+            ])
+    elif tipo_reporte == "comunicacional":
+        if nivel == "Verde":
+            keyboard.extend([
+                [InlineKeyboardButton("Descripción del evento", callback_data="mod_descripcion_evento")],
+                [InlineKeyboardButton("Tipo de medio", callback_data="mod_tipo_medio")],
+                [InlineKeyboardButton("Fecha y hora del evento", callback_data="mod_fecha_hora")],
+                [InlineKeyboardButton("Actores clave", callback_data="mod_actores_clave")],
+                [InlineKeyboardButton("Contenido difundido", callback_data="mod_contenido_difundido")],
+            ])
+        elif nivel in ["Amarilla", "Naranja"]:
+            keyboard.extend([
+                [InlineKeyboardButton("Descripción del evento", callback_data="mod_descripcion_evento")],
+                [InlineKeyboardButton("Tipo de medio", callback_data="mod_tipo_medio")],
+                [InlineKeyboardButton("Fecha y hora del evento", callback_data="mod_fecha_hora")],
+                [InlineKeyboardButton("Actores clave", callback_data="mod_actores_clave")],
+                [InlineKeyboardButton("Contenido difundido", callback_data="mod_contenido_difundido")],
+                [InlineKeyboardButton("Audiencia afectada", callback_data="mod_audiencia_afectada")],
+                [InlineKeyboardButton("Violencia", callback_data="mod_violencia")],
+                [InlineKeyboardButton("Amenaza de vida", callback_data="mod_amenaza")],
+            ])
+        elif nivel == "Roja":
+            keyboard.extend([
+                [InlineKeyboardButton("Violencia", callback_data="mod_violencia")],
+                [InlineKeyboardButton("Amenaza de vida", callback_data="mod_amenaza")],
+            ])
+
+    # Agregar preguntas comunes a todos los reportes al final
+    keyboard.extend([
+        [InlineKeyboardButton("Verificado", callback_data="mod_verificado")],
+        [InlineKeyboardButton("Observaciones", callback_data="mod_observaciones")],
+        [InlineKeyboardButton("Contenido multimedia", callback_data="mod_multimedia")],
+        [InlineKeyboardButton("✅ Continuar al resumen ", callback_data="continuar_a_resumen")],
+        [InlineKeyboardButton("❌ Cancelar modificación", callback_data="cancelar_modificacion")],
+    ])
+    
+    # 🚨 CORRECCIÓN: Crear el objeto InlineKeyboardMarkup a partir de la lista 'keyboard'
+    reply_markup = InlineKeyboardMarkup(keyboard) 
+      
+    # 3. Enviar un nuevo mensaje con el menú de modificación
+    mensaje = await update.effective_chat.send_message(
+        "📝 **MENÚ DE MODIFICACIÓN**\n\nSeleccione el campo que desea modificar:",
+        reply_markup=reply_markup, 
+        parse_mode="Markdown"
+    )
+    
+    # 4. Guardar el ID del nuevo mensaje para futuras interacciones
+    context.user_data["pregunta_id"] = mensaje.message_id
+    
+    return ESTADO_MODIFICAR
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< manejar_modificacion >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+
+async def manejar_modificacion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+    opcion = query.data.replace("mod_", "") 
+    
+    context.user_data["modificando_desde_resumen"] = True
+
+     # 🔑 Borrar el menú de modificación
+    try:
+        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+    except Exception as e:
+        logger.warning(f"No se pudo borrar el menú de modificación: {e}")
+
+    # 🔄 Diccionario de preguntas por campo
+
+    if opcion == "nivel":
+        pregunta = "Seleccione el nuevo nivel de alerta:"
+        keyboard = [[InlineKeyboardButton("🟢 Verde", callback_data="verde")], [InlineKeyboardButton("🟡 Amarilla", callback_data="amarilla")], [InlineKeyboardButton("🟠 Naranja", callback_data="naranja")], [InlineKeyboardButton("🔴 Roja", callback_data="roja")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        return ESTADO_NIVEL
+    
+    elif opcion == "tipo_reporte":
+        pregunta = "Seleccione el nuevo tipo de reporte:"
+        keyboard = [[InlineKeyboardButton("Operacional", callback_data="operacional")], [InlineKeyboardButton("Comunicacional", callback_data="comunicacional")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        return ESTADO_TIPO_REPORTE
+    
+    elif opcion == "tipo_evento":
+        context.user_data["en_modo_modificacion"] = True
+
+        tipo = context.user_data.get("tipo_reporte", "").lower()
+        nivel = context.user_data.get("nivel", "").lower()
+
+        if tipo == "comunicacional":
+            opciones = opciones_evento_verde_comunicacional if nivel == "verde" else opciones_evento_critico
+            estado_destino = ESTADO_TIPO_EVENTO_COMUNICACIONAL
+        else:
+            opciones = opciones_evento_verde_operacional if nivel == "verde" else opciones_evento_critico
+            estado_destino = ESTADO_TIPO_EVENTO
+
+        mensaje = await query.message.chat.send_message(
+            "📌 Seleccione el nuevo tipo de evento:",
+            reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation(opciones))
+        )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, estado_destino)
+        return estado_destino
+    
+    elif opcion == "descripcion_evento":
+        context.user_data["en_modo_modificacion"] = True
+
+        mensaje = await update.effective_chat.send_message(
+                "Por favor, ingrese la nueva descripción del evento:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_DESCRIPCION_EVENTO)
+        return ESTADO_DESCRIPCION_EVENTO
+    
+    elif opcion == "fecha_hora":
+        context.user_data["en_modo_modificacion"] = True
+        eliminar_estado_del_historial(context, ESTADO_FECHA_PUBLICACION)
+        return await preguntar_fecha_webapp(update, context)
+    #elif opcion == "fecha_hora":
+        context.user_data["en_modo_modificacion"] = True
+
+        mensaje = await update.effective_chat.send_message(
+                "*Por favor, escribe la fecha y hora del evento en este formato exacto:*\n\n 27/10/2025 11:00 AM`\n\n✅ Asegúrate de incluir el espacio entre la fecha y la hora, y usar AM o PM en mayúsculas."
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_DESCRIPCION_EVENTO)
+        return ESTADO_FECHA_PUBLICACION
+    
+    elif opcion == "actores_clave":
+        context.user_data["en_modo_modificacion"] = True
+
+        mensaje = await update.effective_chat.send_message(
+                "Por favor, ingrese los actores clave:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_ACTORES_CLAVE)
+        return ESTADO_ACTORES_CLAVE
+    
+    elif opcion == "acciones_tomadas":
+        context.user_data["en_modo_modificacion"] = True
+
+        mensaje = await update.effective_chat.send_message(
+        "Por favor, ingrese las nuevas acciones tomadas:"            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_ACCIONES)
+        return ESTADO_ACCIONES
+    
+    elif opcion == "recursos_comprometidos":
+        context.user_data["en_modo_modificacion"] = True
+        mensaje = await update.effective_chat.send_message(
+        "Por favor, ingrese los nuevos recursos comprometidos:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_RECURSOS)
+        return ESTADO_RECURSOS
+    
+    # Asumiendo que esta es la sección dentro de async def manejar_modificacion(...):
+
+    elif opcion == "tipo_medio":
+        context.user_data["en_modo_modificacion"] = True
+        
+        # 1. Definición de las opciones (si no están disponibles globalmente)
+        opciones_tipo_medio = [
+            [InlineKeyboardButton("Red Social", callback_data="red_social")],
+            [InlineKeyboardButton("Prensa", callback_data="prensa")],
+            [InlineKeyboardButton("Radio", callback_data="radio")],
+            [InlineKeyboardButton("Televisión", callback_data="television")],
+        ]
+        
+        # 2. 🚨 FIX CLAVE: Se elimina el argumento 'incluir_finalizar=False'
+        reply_markup = InlineKeyboardMarkup(opciones_tipo_medio)
+        
+
+        # 🔄 Enviar la pregunta CON LOS BOTONES
+        mensaje = await update.effective_chat.send_message(
+            "📺 Por favor, **seleccione el nuevo tipo de medio**:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        
+        eliminar_estado_del_historial(context, ESTADO_TIPO_MEDIO)
+        return ESTADO_TIPO_MEDIO
+    
+    elif opcion == "nombre_medio":
+        context.user_data["en_modo_modificacion"] = True
+        mensaje = await update.effective_chat.send_message(
+        "Por favor, ingrese el nuevo nombre del medio:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_NOMBRE_MEDIO)
+        return ESTADO_NOMBRE_MEDIO
+    
+    elif opcion == "contenido_difundido":
+        context.user_data["en_modo_modificacion"] = True
+
+        mensaje = await update.effective_chat.send_message(
+        "Por favor, ingrese el nuevo contenido difundido:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_CONTENIDO_DIFUNDIDO)
+        return ESTADO_CONTENIDO_DIFUNDIDO
+    
+    elif opcion == "audiencia_afectada":
+        context.user_data["en_modo_modificacion"] = True
+        
+        mensaje = await update.effective_chat.send_message(
+        "Por favor, ingrese la nueva audiencia afectada:"
+            )
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_AUDIENCIA_AFECTADA)
+        return ESTADO_AUDIENCIA_AFECTADA
+    
+    elif opcion == "violencia":
+        context.user_data["en_modo_modificacion"] = True
+        
+        pregunta = "¿Hubo violencia?"
+        keyboard = [[InlineKeyboardButton("✅Si", callback_data="si")], [InlineKeyboardButton("❌No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        eliminar_estado_del_historial(context, ESTADO_VIOLENCIA)
+        return ESTADO_VIOLENCIA
+    
+    elif opcion == "amenaza":
+        context.user_data["en_modo_modificacion"] = True
+        
+        pregunta = "¿Hubo amenaza de vida?"
+        keyboard = [[InlineKeyboardButton("✅Si", callback_data="si")], [InlineKeyboardButton("❌No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        eliminar_estado_del_historial(context, ESTADO_AMENAZA)
+        return ESTADO_AMENAZA
+    
+    elif opcion == "verificado":
+        context.user_data["en_modo_modificacion"] = True
+        
+        pregunta = "¿El evento fue verificado?"
+        keyboard = [[InlineKeyboardButton("✅Si", callback_data="si")], [InlineKeyboardButton("❌No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        eliminar_estado_del_historial(context, ESTADO_VERIFICADO)
+        return ESTADO_VERIFICADO
+    
+    elif opcion == "observaciones":
+        context.user_data["en_modo_modificacion"] = True
+        
+        pregunta = "Por favor, ingrese sus nuevas observaciones. Si no tiene, puede continuar."
+        keyboard = [[InlineKeyboardButton("No tengo observaciones, continuar", callback_data="no_observaciones")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        eliminar_estado_del_historial(context, ESTADO_OBSERVACIONES)
+        return ESTADO_OBSERVACIONES
+    
+    elif opcion == "multimedia":
+        context.user_data["en_modo_modificacion"] = True
+        
+        pregunta = "Por favor, adjunta hasta un máximo de 5 archivos de imágenes o videos. Si no tienes, selecciona 'Continuar'."
+        keyboard = [[InlineKeyboardButton("Continuar", callback_data="continuar_multimedia")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        mensaje = await query.message.chat.send_message(pregunta, reply_markup=reply_markup)
+        context.user_data["pregunta_modificacion_id"] = mensaje.message_id       
+        await borrar_pregunta_anterior(context, update)
+        eliminar_estado_del_historial(context, ESTADO_ESPERANDO_MULTIMEDIA)
+        return ESTADO_ESPERANDO_MULTIMEDIA
+    elif opcion == "cancelar_modificacion":
+        # ✅ Limpiar historial antes de modificar
+        context.user_data["history_stack"] = []
+        await query.edit_message_text("Modificación cancelada. Volviendo al resumen...")
+        eliminar_estado_del_historial(context)
+        return await mostrar_resumen(update, context)
+    await query.edit_message_text(pregunta, reply_markup=reply_markup)
+# 🔑 CLAVE 2: Guardar el ID de la PREGUNTA del bot
+    context.user_data["pregunta_id"] = mensaje.message_id
+    
+    return ESTADO_MODIFICAR                 
+
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< continuar_a_resumen >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def continuar_a_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Maneja el callback 'continuar_a_resumen' desde el menú de modificación.
+    Limpia el menú y redirige al resumen final.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # 1. Borrar el mensaje del Menú de Modificación (pregunta_id)
+    # NOTA: En este estado, 'pregunta_id' guarda el ID del menú de modificación.
+    menu_id = context.user_data.pop("pregunta_id", None)
+    if menu_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, 
+                message_id=menu_id
+            )
+        except Exception:
+            pass # Ignoramos errores de borrado
+
+    # 2. Limpiar las banderas de modificación (si no se retorna a otro estado de modificación)
+    context.user_data.pop("en_modo_modificacion", None)
+    context.user_data.pop("modificando_desde_resumen", None)
+    
+    # --- LÓGICA DE GENERACIÓN DE RESUMEN FINAL (Igual a la de continuar_multimedia) ---
+    
+    # A. Construir y mostrar el nuevo resumen final
+    resumen_final = construir_resumen_parcial(context)
+    
+    mensaje_resumen = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"<b>FONPESCA - Sistema de Reportes de Alertas Tempranas</b>\n\n{resumen_final}",
+        parse_mode="HTML"
+    )
+    context.user_data["resumen_id"] = mensaje_resumen.message_id
+
+    # B. Mostrar botones finales (Enviar, Modificar, Cancelar)
+    botones = [
+        [InlineKeyboardButton("✅ Enviar reporte", callback_data="enviar_reporte")],
+        [InlineKeyboardButton("✏️ Modificar", callback_data="modificar_reporte")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_reporte")]
+    ]
+    
+    reply_markup_final = InlineKeyboardMarkup(botones)
+    
+    mensaje_botones = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="¿Desea enviar el reporte o realizar modificaciones?",
+        reply_markup=reply_markup_final
+    )
+    context.user_data["mensaje_botones_finales_id"] = mensaje_botones.message_id
+    
+    # 3. Transición al estado de resumen
+    # Se debe asegurar que ESTADO_RESUMEN no quede en el historial si el usuario usa 'Volver'.
+    try:
+        eliminar_estado_del_historial(context, ESTADO_RESUMEN)
+    except Exception:
+        pass
+        
+    return ESTADO_RESUMEN
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< manejar_confirmacion_modificacion >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def manejar_confirmacion_modificacion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Maneja la selección del usuario después de una modificación: 
+    'Seguir Editando' o 'Continuar a Resumen Final'.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # >>> Lógica para ELIMINAR el mensaje de confirmación (CLAVE) <<<
+    confirmacion_id = context.user_data.pop("confirmacion_modificacion_id", None)
+    chat_id = query.message.chat_id
+    
+    if confirmacion_id:
+        try:
+            # Borrar el mensaje de "¿Desea seguir modificando...?"
+            await context.bot.delete_message(chat_id=chat_id, message_id=confirmacion_id)
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo borrar el mensaje de confirmación (ID: {confirmacion_id}): {e}")
+    # >>> Fin Lógica de Eliminación <<<
+
+    data = query.data
+    
+    if data == "seguir_modificando":
+        # Muestra el menú de modificación nuevamente
+        context.user_data["en_modo_modificacion"] = True
+        # Asumo que manejar_modificar_reporte lleva al menú de ESTADO_MODIFICAR
+        return await manejar_modificar_reporte(update, context) 
+    
+    elif data == "continuar_a_resumen":
+        # Pasa al resumen final
+        context.user_data.pop("en_modo_modificacion", None)
+        context.user_data.pop("campo_a_modificar", None)
+        # Asumo que mostrar_resumen está definido en resumen.py
+        return await mostrar_resumen(update, context) 
+        
+    return ESTADO_RESUMEN
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< generar_resumen_final >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def generar_resumen_final(context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Genera una cadena de texto con el resumen completo del reporte para visualización."""
+    datos_personales = context.user_data.get("datos_personales", {})
+    datos_reporte = context.user_data.get("reporte", {})
+    numero_reporte = context.user_data.get("numero_reporte")
+    
+    # Formateo de datos personales
+    nombre = datos_personales.get("nombre_usuario")
+    estado_persona = datos_personales.get("estado")
+    
+    # Formateo de datos del reporte
+    nivel_alerta = datos_reporte.get("nivel")
+    tipo_reporte = datos_reporte.get("tipo_reporte")
+    tipo_evento = datos_reporte.get("tipo_evento")
+    descripcion_evento = datos_reporte.get("descripcion")
+    acciones_tomadas = datos_reporte.get("acciones_tomadas")
+    recursos_comprometidos = datos_reporte.get("recursos_comprometidos")
+    violencia = datos_reporte.get("violencia")
+    amenaza = datos_reporte.get("amenaza")
+    tipo_medio = datos_reporte.get("tipo_medio")
+    nombre_medio = datos_reporte.get("nombre_medio")
+    contenido_difundido = datos_reporte.get("contenido_difundido")
+    audiencia_afectada = datos_reporte.get("audiencia_afectada")
+    verificado = datos_reporte.get("verificado")
+    observaciones = context.user_data.get("observaciones", "Sin observaciones")
+    multimedia_info = "Sí" if context.user_data.get("multimedia_path") else "Sin archivos multimedia"
+
+    # Generar la cadena de texto
+    resumen = (
+
+f"FONPESCA - Sistema de Reportes de Alertas Tempranas\n\n Resumen de reporte\n\n"
+
+        f"1. **👤 Nombre:** {nombre}\n"
+        f"3. **📍 Estado:** {estado_persona}\n\n"
+
+
+        f"**Datos del Reporte:**\n"
+        
+        f"1. ** 🚨 Número del reporte:** {numero_reporte}\n"
+        f"2. **🗂Nivel de Alerta:** {nivel_alerta}\n"
+        f"3. **🗂Tipo de Reporte:** {tipo_reporte}\n"
+        f"4. **Tipo de Evento:** {tipo_evento}\n"
+        f"5. **Descripción del Evento:** {descripcion_evento}\n"
+        f"6. **Acciones Tomadas:** {acciones_tomadas}\n"
+        f"7. **Recursos Comprometidos:** {recursos_comprometidos}\n"
+        f"8. **Violencia:** {violencia}\n"
+        f"9. **Amenaza:** {amenaza}\n"
+        f"10. **Verificado:** {verificado}\n"
+        f"11. **Tipo de Medio:** {tipo_medio}\n"
+        f"12. **Nombre del Medio:** {nombre_medio}\n"
+        f"13. **Contenido Difundido:** {contenido_difundido}\n"
+        f"14. **Audiencia Afectada:** {audiencia_afectada}\n"
+        f"15. **Observaciones:** {observaciones}\n"
+        f"16. **Multimedia:** {multimedia_info}\n"
+    )
+    return resumen
+

@@ -1,0 +1,934 @@
+# handlers/utils.py
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import cm
+from reportlab.lib.pagesizes import LETTER
+import psycopg2
+from configuracion.inicializacion import logger
+import json
+import os
+import telegram.error
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update,WebAppInfo,InputFile
+import datetime
+import traceback
+from telegram.ext import ConversationHandler, ContextTypes
+
+from configuracion.constantes import (
+    CALLBACK_INICIO, CALLBACK_ANTERIOR, CALLBACK_FINALIZAR, ESTADO_CONFIRMACION_MODIFICACION, ESTADO_REINICIAR, ESTADO_RESUMEN, 
+    ESTADO_FECHA_PUBLICACION,CHAT_IDS_POR_TIPO,CONTACTOS_POR_TIPO,ESTADO_SELECCION_FECHA
+
+)
+
+# --- FUNCIONES AUXILIARES DE TECLADO ---
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< crear_menu_alerta >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+# 1. Función para crear el menú de Alerta (sin botones de navegación)
+
+# Diccionario de mapeo de claves de contexto a nombres legibles para el usuario
+MAPEO_CAMPOS_MODIFICABLES = {
+    'cedula': 'Cédula',
+    'nivel': 'Nivel de Alerta',
+    'tipo_reporte': 'Tipo de Reporte',
+    'tipo_evento': 'Tipo de Evento',
+    'descripcion': 'Descripción del Evento', 
+    'descripcion_evento': 'Descripción del Evento', 
+    'acciones': 'Acciones Tomadas',
+    'recursos': 'Recursos Comprometidos',
+    'violencia': 'Violencia',
+    'amenaza': 'Amenaza a la Vida',
+    'verificado': 'Verificado',
+    'observaciones': 'Observaciones',
+    'tipo_medio': 'Tipo de Medio',
+    'nombre_medio': 'Medio Específico',
+    'contenido_difundido': 'Contenido Difundido',
+    'audiencia_afectada': 'Audiencia Afectada',
+    'fecha_hora': 'Fecha y Hora del Evento',
+    'actores_clave': 'Actores Clave',
+}
+
+def crear_menu_alerta():
+    keyboard = [
+            [InlineKeyboardButton("🟢 Verde", callback_data="Verde")],
+            [InlineKeyboardButton("🟡 Amarilla", callback_data="Amarilla")],
+            [InlineKeyboardButton("🟠 Naranja", callback_data="Naranja")],
+            [InlineKeyboardButton("🚨 Roja", callback_data="Roja")],
+       ]
+    # Retorna solo la lista de filas
+    return keyboard
+
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< crear_botones_navegacion >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+# 2. Función para añadir los botones de navegación estándar
+def crear_botones_navegacion(es_inicio=False):
+    """Crea la fila estándar de botones de navegación."""
+
+    botones = [
+
+        InlineKeyboardButton("🔙 Anterior", callback_data=CALLBACK_ANTERIOR),
+        InlineKeyboardButton("🏠 Inicio", callback_data=CALLBACK_INICIO),
+        InlineKeyboardButton("❌ Finalizar", callback_data=CALLBACK_FINALIZAR)
+        ]
+
+    return [botones]
+
+
+# 3. Función para fusionar el teclado principal con los botones de navegación
+def merge_keyboard_with_navigation(keyboard, es_inicio=False):
+    """Fusiona el teclado principal con los botones de navegación."""
+    # Asegura que el teclado sea una lista de listas (filas)
+    if not keyboard or not isinstance(keyboard[0], list):
+        keyboard = [keyboard] if keyboard else []
+
+    navigation_buttons = crear_botones_navegacion(es_inicio)
+
+    # Devuelve el teclado principal extendido con los botones de navegación
+    return keyboard + navigation_buttons
+
+
+# --- Funciones de Base de Datos ---
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< obtener_conexion_db >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+def obtener_conexion_db():
+    """Establece una conexión a la base de datos PostgreSQL."""
+
+    config_db = {
+    "dbname": os.getenv("DB_DATABASE"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT", "5432")
+}
+    try:
+        conn = psycopg2.connect(**config_db)
+        return conn
+    except psycopg2.Error as err:
+        logger.error(f"Error al conectar con la base de datos: {err}")
+        return None
+
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< verificar_cedula_en_db >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def verificar_cedula_en_db(cedula):
+    """Verifica si la cédula existe en la tabla 'usuarios' de la base de datos."""
+    conn = obtener_conexion_db()
+    if conn is None:
+        return False
+
+    try:
+        with conn.cursor() as cursor:
+            # Reemplaza 'usuarios' y 'cedula' si los nombres de la tabla o columna son diferentes
+            query = "SELECT cedula FROM usuarios WHERE cedula = %s;"
+            cursor.execute(query, (cedula,))
+            resultado = cursor.fetchone()
+            return resultado is not None
+    except psycopg2.Error as err:
+        logger.error(
+            f"Error al verificar la cédula en la base de datos: {err}")
+        return False
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
+
+def generar_codigo_reporte(nivel, tipo_reporte):
+    """
+    Genera un código de reporte con el formato:
+    primera letra del nivel + primera letra del tipo + aammddhhmm
+    """
+    nivel_map = {
+        "verde": "V",
+        "amarilla": "A",
+        "naranja": "N",
+        "roja": "R",
+    }
+    tipo_map = {
+        "operacional": "O",
+        "comunicacional": "C",
+    }
+
+    primera_letra_nivel = nivel_map.get(nivel.lower(), "X")
+    primera_letra_tipo = tipo_map.get(tipo_reporte.lower(), "X")
+
+    fecha_hora_str = datetime.now().strftime('%y%m%d%H%M')
+    return f"{primera_letra_nivel}{primera_letra_tipo}-{fecha_hora_str}"
+
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< guardar_reporte_en_db >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def guardar_reporte_en_db(data):
+    """Guarda los datos del reporte en la base de datos PostgreSQL."""
+
+    conn = obtener_conexion_db()
+    if conn is None:
+        return False
+
+    tipo_reporte = data.get("tipo_reporte", "").lower()
+
+    # ✅ Convertir respuestas de texto a booleanos
+    violencia = str(data.get("violencia", "No")).capitalize() == "Si"
+    amenaza_vida = str(data.get("amenaza_vida", "No")).capitalize() == "Si"
+    verificado = str(data.get("verificado", "No")).capitalize() == "Si"
+    codigo = data.get("codigo_reporte")
+
+    # ✅ Convertir fecha y hora del evento a datetime
+    fecha_raw = (data.get("fecha_publicacion") or "").strip()
+    hora_raw = (data.get("hora_publicacion") or "").strip()
+    fecha_evento = None
+
+    if fecha_raw and hora_raw:
+        try:
+            fecha_evento = datetime.strptime(f"{fecha_raw} {hora_raw}", "%d/%m/%Y %I:%M %p")
+        except Exception as e:
+            print(f"⚠️ Error al convertir fecha_evento: {e}")
+            fecha_evento = None
+
+    nivel_alerta = data.get("nivel")
+
+    try:
+        with conn.cursor() as cursor:
+            if tipo_reporte == "operacional":
+                query = """
+                INSERT INTO reportes_operacionales (
+                    cedula_usuario, nivel_alerta, tipo_evento, descripcion_tecnica, fecha_evento, actores_clave,
+                    recursos_comprometidos, acciones_ejecutadas, incluye_violencia, amenaza_a_la_vida,
+                    confirmacion_veracidad, observaciones, recursos_multimedia, fecha_hora, codigo_reporte
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                """
+                params = (
+                    data.get("cedula"),
+                    nivel_alerta,
+                    data.get("tipo_evento", ""),
+                    data.get("descripcion", ""),
+                    fecha_evento,
+                    data.get("actores_clave", ""),
+                    data.get("recursos", ""),
+                    data.get("acciones", ""),
+                    violencia,
+                    amenaza_vida,
+                    verificado,
+                    data.get("observaciones", ""),
+                    json.dumps(data.get("recursos_multimedia", [])),
+                    datetime.now(),
+                    codigo
+                )
+
+            elif tipo_reporte == "comunicacional":
+                query = """
+                INSERT INTO reportes_comunicacionales (
+                    cedula_usuario, nivel_alerta, tipo_evento, tipo_medio, medio_especifico, fecha_evento, actores_clave,
+                    contenido_difundido, audiencia_afectada, incluye_violencia, amenaza_a_la_vida,
+                    confirmacion_veracidad, observaciones, recursos_multimedia, fecha_hora, codigo_reporte
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                """
+                params = (
+                    data.get("cedula"),
+                    nivel_alerta,
+                    data.get("tipo_evento", ""),
+                    data.get("tipo_medio", ""),
+                    data.get("medio_especifico", "") or data.get("nombre_medio", ""),
+                    fecha_evento,
+                    data.get("actores_clave", ""),
+                    data.get("contenido_difundido", ""),
+                    data.get("audiencia_afectada", ""),
+                    violencia,
+                    amenaza_vida,
+                    verificado,
+                    data.get("observaciones", ""),
+                    json.dumps(data.get("recursos_multimedia", [])),
+                    datetime.now(),
+                    codigo
+                )
+
+            else:
+                logger.error(f"Tipo de reporte desconocido: {tipo_reporte}")
+                return False
+
+            cursor.execute(query, params)
+        conn.commit()
+        return True
+
+    except psycopg2.Error as err:
+        logger.error(f"Error al guardar el reporte en la base de datos: {err}")
+        conn.rollback()
+        return False
+
+    finally:
+        if conn:
+            conn.close()
+
+
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< guardar_en_historial >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def guardar_en_historial(context, estado):
+    if context.user_data.get("modificando_desde_resumen") or context.user_data.get("en_modo_modificacion"):
+        return  # No guardar en historial durante modificación
+    if 'history_stack' not in context.user_data:
+        context.user_data['history_stack'] = []
+    if not context.user_data['history_stack'] or context.user_data['history_stack'][-1] != estado:
+        context.user_data['history_stack'].append(estado)
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< verificar_modificacion >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def verificar_modificacion(update, context):
+    if context.user_data.get("modificando_desde_resumen"):
+        botones = [
+            [InlineKeyboardButton("✏️ Seguir modificando",
+                                  callback_data="seguir_modificando")],
+            [InlineKeyboardButton("✅ Finalizar modificación",
+                                  callback_data="continuar_a_resumen")]
+        ]
+        reply_markup = InlineKeyboardMarkup(botones)
+
+        if update.message:
+            await update.message.reply_text(
+                "✅ Se ha modificado su respuesta.\n¿Desea seguir modificando?",
+                reply_markup=reply_markup
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                "✅ Se ha modificado su respuesta.\n¿Desea seguir modificando?",
+                reply_markup=reply_markup
+            )
+
+        context.user_data["modificando_desde_resumen"] = False
+
+        
+        return ESTADO_CONFIRMACION_MODIFICACION
+
+    context.user_data["modificando_por_anterior"] = False
+    return None
+
+ # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Listas de opciones para tipo de evento >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+# Para alertas Amarilla, Naranja y Roja
+
+opciones_evento_critico = [
+    [InlineKeyboardButton("1. Pescadores y acuicultores",
+                          callback_data="pescadores_acuicultores")],
+    [InlineKeyboardButton("2. CONPPA", callback_data="conppa")],
+    [InlineKeyboardButton("3. Político / Conflicto Social",
+                          callback_data="conflicto_social")],
+    [InlineKeyboardButton("4. Desastres naturales",
+                          callback_data="desastres_naturales")],
+    [InlineKeyboardButton("5. Otros (describir)", callback_data="otros")]
+]
+
+# Para alerta Verde Operacional
+opciones_evento_verde_operacional = [
+    [InlineKeyboardButton("1. Jornada de limpieza",
+                          callback_data="jornada_limpieza")],
+    [InlineKeyboardButton("2. Capacitación técnica",
+                          callback_data="capacitacion_tecnica")],
+    [InlineKeyboardButton("3. Entrega de insumos",
+                          callback_data="entrega_insumos")],
+    [InlineKeyboardButton("4. Actividad comunitaria",
+                          callback_data="actividad_comunitaria")],
+    [InlineKeyboardButton("5. Otro (describir)",
+                          callback_data="otro_operacional")]
+]
+
+# Para alerta Verde Comunicacional
+opciones_evento_verde_comunicacional = [
+    [InlineKeyboardButton("1. Difusión de buenas prácticas",
+                          callback_data="buenas_practicas")],
+    [InlineKeyboardButton("2. Promoción de productos",
+                          callback_data="promocion_productos")],
+    [InlineKeyboardButton("3. Evento institucional",
+                          callback_data="evento_institucional")],
+    [InlineKeyboardButton("4. Reconocimiento público",
+                          callback_data="reconocimiento")],
+    [InlineKeyboardButton("5. Otro (describir)",
+                          callback_data="otro_comunicacional")]
+]
+
+ # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< mostrar_resumen_parcial>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def construir_resumen_parcial(context):
+    datos = context.user_data
+    
+    nivel = datos.get("nivel", "").lower()
+    tipo = datos.get("tipo_reporte", "").lower()
+
+
+# La clave que guarda los archivos (la lista de IDs)
+    def campo(label: str, key: str, datos: dict) -> str:
+        """Retorna la línea del resumen solo si el dato existe y no está vacío."""
+
+        # Intenta obtener el valor de context.user_data
+        valor = datos.get(key)
+
+        # Si el valor es None, False, una lista vacía, o una cadena vacía, retorna ""
+        if not valor:
+            return ""
+        return f"{label}: {valor}\n"  # <--- ¡AÑADE ESTO!
+# NOTA: Debes pasar 'context.user_data' a esta función.
+# Ejemplo de uso: resumen += campo("👤 Nombre del usuario", "nombre_usuario", context.user_data)
+
+    resumen = "RESUMEN DEL REPORTE\n\n"
+
+    # Datos generales
+    resumen += campo("👤 Nombre del usuario", "nombre_usuario", datos)
+    resumen += campo("📍 Estado", "estado", datos)
+
+    resumen += "\n📋 Datos del Reporte\n\n"
+
+    resumen += campo("🚨 Nivel de alerta", "nivel", datos)
+    resumen += campo("🗂 Tipo de reporte", "tipo_reporte", datos)
+
+
+    # --- Lógica por nivel y tipo ---
+    if nivel == "verde":
+        if tipo == "operacional":
+            resumen += campo("📌 Tipo de evento", "tipo_evento", datos)
+            resumen += campo("📝 Descripción del evento", "descripcion", datos) or campo("📝 Descripción del evento", "descripcion_evento", datos)            
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+
+            if fecha or hora:
+                resumen += f"📅 fecha y hora del evento:\n {fecha} {hora}\n"
+            resumen += campo("👥 Actores clave", "actores_clave", datos)
+            resumen += campo("✅ Acciones tomadas", "acciones", datos)
+            resumen += campo("🔍Verificado", "verificado", datos)
+            resumen += campo("🗒 Observaciones", "observaciones", datos)
+
+        elif tipo == "comunicacional":
+            resumen += campo("📌 Tipo de evento", "tipo_evento", datos)
+            resumen += campo("📝 Descripción del evento", "descripcion", datos) or campo("📝 Descripción del evento", "descripcion_evento", datos)            # Mostrar tipo de medio + nombre del medio en una sola línea
+            tipo_medio = datos.get("tipo_medio", "")
+            medio_especifico = datos.get("medio_especifico", "") or datos.get("nombre_medio", "")
+            if tipo_medio:
+                linea_medio = f"📡 Tipo de medio: {tipo_medio}"
+                if medio_especifico:
+                    linea_medio += f" - {medio_especifico}"
+                resumen += linea_medio + "\n"
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                resumen += f"📅 fecha y hora del evento:\n {fecha} {hora}\n"
+            resumen += campo("👥 Actores clave", "actores_clave", datos)
+            resumen += campo("📰 Contenido difundido","contenido_difundido", datos)
+            resumen += campo("🔍 Verificado", "verificado", datos)
+            resumen += campo("🗒 Observaciones", "observaciones", datos)
+
+    elif nivel in ["amarilla", "naranja"]:
+        if tipo == "operacional":
+            resumen += campo("📌 Tipo de evento", "tipo_evento", datos)
+            resumen += campo("📝 Descripción del evento", "descripcion", datos) or campo("📝 Descripción del evento", "descripcion_evento", datos)            
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                resumen += f"📅 fecha y hora del evento:\n {fecha} {hora}\n"
+            resumen += campo("👥 Actores clave", "actores_clave", datos)
+            resumen += campo("📦 Recursos comprometidos", "recursos", datos)
+            resumen += campo("✅ Acciones tomadas", "acciones", datos)
+            resumen += campo("⚠️ Violencia", "violencia", datos)
+            resumen += campo("☠️ Amenaza a la vida", "amenaza_vida", datos)
+            resumen += campo("🔍 Verificado", "verificado", datos)
+            resumen += campo("🗒 Observaciones", "observaciones", datos)
+
+        elif tipo == "comunicacional":
+            resumen += campo("📌 Tipo de evento", "tipo_evento", datos)
+            resumen += campo("📝 Descripción del evento", "descripcion", datos) or campo("📝 Descripción del evento", "descripcion_evento", datos)            # Mostrar tipo de medio + nombre del medio en una sola línea
+            tipo_medio = datos.get("tipo_medio", "")
+            medio_especifico = datos.get("medio_especifico", "") or datos.get("nombre_medio", "")
+            if tipo_medio:
+                linea_medio = f"📡 Tipo de medio: {tipo_medio}"
+                if medio_especifico:
+                    linea_medio += f" - {medio_especifico}"
+                resumen += linea_medio + "\n"
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                resumen += f"📅 fecha y hora del evento:\n {fecha} {hora}\n"
+            resumen += campo("👥 Actores clave", "actores_clave", datos)
+            resumen += campo("📰 Contenido difundido","contenido_difundido", datos)
+            resumen += campo("👥 Audiencia afectada","audiencia_afectada", datos)
+            resumen += campo("⚠️ Violencia", "violencia", datos)
+            resumen += campo("☠️ Amenaza a la vida", "amenaza_vida", datos)
+            resumen += campo("🔍 Verificado", "verificado", datos)
+            resumen += campo("🗒 Observaciones", "observaciones", datos)
+
+    elif nivel == "roja":
+        resumen += campo("📌 Tipo de evento", "tipo_evento", datos)
+        resumen += campo("⚠️ Violencia", "violencia", datos)
+        resumen += campo("☠️ Amenaza a la vida", "amenaza_vida", datos)
+        resumen += campo("🔍 Verificado", "verificado", datos)
+        resumen += campo("🗒 Observaciones", "observaciones", datos)
+       
+
+
+# ✅ Mostrar multimedia solo si ya se llegó a esa etapa
+    def evaluar_multimedia(datos: dict) -> str:
+            if not datos.get("multimedia_finalizada"):
+                return ""
+
+            multimedia_list = datos.get("recursos_multimedia", [])
+            if isinstance(multimedia_list, list) and len(multimedia_list) > 0:
+                return f"📷 Multimedia : {len(multimedia_list)} archivo(s)\n"
+            else:
+                return "📷 Multimedia : Sin Multimdia\n"
+            
+    resumen += evaluar_multimedia(datos) 
+
+    return resumen
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< enviar_mensaje>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def enviar_mensaje(update, texto, parse_mode="HTML"):
+    if update.message:
+        await update.message.reply_text(texto, parse_mode=parse_mode)
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(texto, parse_mode=parse_mode)
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< actualizar_resumen_estatico>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def actualizar_resumen_estatico(update, context):
+    resumen_actualizado = construir_resumen_parcial(context)
+    chat_id = update.effective_chat.id
+    resumen_id = context.user_data.get("resumen_id")
+
+    # ✅ Si ya existe el resumen, bórralo antes de crear uno nuevo
+    if context.user_data.get("resumen_id"):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=context.user_data["resumen_id"])
+        except Exception as e:
+            print(f"⚠️ No se pudo borrar el resumen anterior: {e}")
+        context.user_data["resumen_id"] = None
+
+    # ✅ Crear nuevo resumen
+    try:
+        mensaje = await update.effective_chat.send_message(resumen_actualizado, parse_mode="HTML")
+        context.user_data["resumen_id"] = mensaje.message_id
+    except Exception as e:
+        print(f"⚠️ No se pudo crear el resumen: {e}")
+
+    # ✅ Eliminar la pregunta anterior si no fue editada
+    try:
+        if update.message:
+            await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+        elif update.callback_query and update.callback_query.message and not update.callback_query.message.edit_date:
+            await context.bot.delete_message(chat_id=chat_id, message_id=update.callback_query.message.message_id)
+    except Exception as e:
+        print(f"⚠️ No se pudo borrar la pregunta anterior: {e}")
+
+from datetime import datetime
+
+def generar_numero_reporte(context) -> str:
+    nivel = context.user_data.get("nivel", "").lower()
+    tipo = context.user_data.get("tipo_reporte", "").lower()
+
+    prefijos = {
+        ("verde", "operacional"): "VO-",
+        ("verde", "comunicacional"): "VC-",
+        ("amarilla", "operacional"): "AO-",
+        ("amarilla", "comunicacional"): "AC-",
+        ("naranja", "operacional"): "NO-",
+        ("naranja", "comunicacional"): "NC-",
+        ("roja", "operacional"): "RO-",
+        ("roja", "comunicacional"): "RC-"
+    }
+
+    prefijo = prefijos.get((nivel, tipo), "XX-")  # "XX-" como fallback si no coincide
+    timestamp = datetime.now().strftime("%d%m%Y%H%M")
+    return prefijo + timestamp
+
+
+# ...
+
+# Asegúrate de importar esto:
+# from .utils import guardar_en_historial, generar_numero_reporte 
+# from configuracion.constantes import ESTADO_REINICIAR, ESTADO_RESUMEN
+# from telegram.ext import ConversationHandler
+
+
+async def confirmar_envio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer("Enviando reporte, por favor espere...")
+
+    # 1. Generar número de reporte si no existe
+    if 'numero_reporte' not in context.user_data:
+        context.user_data['numero_reporte'] = generar_numero_reporte(context)
+
+    await borrar_pregunta_anterior(context, update)
+
+    numero_reporte = context.user_data['numero_reporte']
+    resumen_final = construir_resumen_parcial(context)
+    datos = context.user_data
+    nombre_usuario = datos.get("nombre_usuario", "Usuario")
+    estado = datos.get("estado", "Sin estado")
+    tipo_reporte = datos.get("tipo_reporte", "general")
+
+    # Validación de datos
+    if nombre_usuario == "Usuario" or estado == "Sin estado":
+        await query.message.reply_text("⚠️ Faltan datos del usuario. Verifica que se haya capturado correctamente el nombre y el estado.")
+        return ESTADO_RESUMEN
+
+    try:
+        # ✅ Eliminar resumen parcial si existe
+        resumen_id = context.user_data.pop("resumen_id", None)
+        if resumen_id:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=resumen_id)
+            except Exception as e:
+                print(f"⚠️ No se pudo borrar el resumen parcial: {e}")
+
+        # ✅ Eliminar botones finales si existen
+        botones_id = context.user_data.pop("mensaje_botones_finales_id", None)
+        if botones_id:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=botones_id)
+            except Exception as e:
+                print(f"⚠️ No se pudo borrar los botones finales: {e}")
+
+        # 2. Guardar en historial
+        guardar_en_historial(context, ESTADO_RESUMEN)
+
+        # 3. Eliminar resumen estático si existe
+        if context.user_data.get('resumen_id'):
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=context.user_data['resumen_id']
+            )
+
+        # 4. Enviar resumen final al usuario
+        keyboard = [
+            [InlineKeyboardButton("✅ Sí, otro reporte", callback_data="si_otro_reporte")],
+            [InlineKeyboardButton("❌ No, finalizar", callback_data="no_otro_reporte")],
+        ]
+
+        await query.message.reply_text(
+            f"✅ **Reporte Enviado y Registrado con éxito.** ✅\n\n"
+            f"**Número de Reporte:** `{numero_reporte}`\n\n"
+            f"`{resumen_final}\n\n`Gracias por su colaboración. ¿Desea iniciar otro reporte?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+        # 5. Generar PDF institucional
+        ruta_pdf = f"reporte_{numero_reporte}.pdf"
+        
+       
+        c = canvas.Canvas(ruta_pdf, pagesize=LETTER)
+        width, height = LETTER
+
+        # 🔹 Ajustes generales
+        margen_lateral = 20 * mm
+        espacio_vertical = 10 * mm
+        
+    # 🖼️ Logos
+        logo_izquierdo = "logo/fonpesca.png"
+        logo_derecho = "logo/minpesca.png"
+        # 🖼️ 1. Logos izquierdo y derecho
+        c.drawImage(logo_izquierdo, x=margen_lateral, y=height - 30 * mm, width=20 * mm, height=20 * mm, mask='auto')
+        c.drawImage(logo_derecho, x=width - margen_lateral - 30 * mm, y=height - 20 * mm, width=20 * mm, height=30 * mm, mask='auto')
+
+        # 📝 2. Título centrado
+        c.setFont("Helvetica-Bold", 16)
+        c.drawCentredString(width / 2, height - 55 * mm, "REPORTE DE ALERTAS TEMPRANAS")
+
+        # 📅 3. Fecha y hora (dos espacios más abajo del título)
+        fecha = datos.get("fecha", datetime.now().strftime("%d/%m/%Y %H:%M"))
+        c.setFont("Helvetica", 11)
+        c.drawCentredString(width / 2, height - 70 * mm, f"Fecha de generación: {fecha}")
+
+        # 🔢 4. Número de reporte en negrita
+        numero = datos.get("numero_reporte", "N° 001")
+        c.setFont("Helvetica-Bold", 12)
+        c.drawCentredString(width / 2, height - 80 * mm, f"Reporte: {numero}")
+
+        # 📦 5. Recuadro con datos del reporte
+        contenido = construir_contenido_pdf(datos)
+        tabla = Table(contenido, colWidths=[65 * mm, width - 105 * mm])
+        tabla.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 1, colors.black),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+            ("BACKGROUND", (0, 0), (0, -1), colors.lightgrey),
+        ]))
+
+        tabla.wrapOn(c, width, height)
+        tabla.drawOn(c, margen_lateral, height - 165 * mm)
+
+        # 🏢 6. Oficina en la esquina inferior derecha
+        oficina = datos.get("oficina", "Oficina de Seguimiento y Control")
+        c.setFont("Helvetica-Oblique", 10)
+        c.setFillColor(colors.grey)
+        c.drawRightString(width - margen_lateral, 15 * mm, oficina)
+
+        c.save()
+
+        # 6. Enviar PDF al usuario
+        try:
+            with open(ruta_pdf, "rb") as archivo:
+                await update.effective_chat.send_document(
+                    document=InputFile(archivo),
+                    filename=ruta_pdf,
+                    caption="📄 Descargue su Reporte de Alertas Tempranas en PDF."
+                )
+        except Exception as e:
+            print(f"⚠️ Error al enviar el PDF al usuario: {e}")
+
+        # 7. Enviar PDF a responsables según tipo de reporte
+        responsables = CHAT_IDS_POR_TIPO.get(tipo_reporte, [])
+        for chat_id in responsables:
+            try:
+                with open(ruta_pdf, "rb") as archivo:
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=InputFile(archivo),
+                        filename=ruta_pdf,
+                        caption=(
+                            f"📢 Nuevo reporte *{tipo_reporte}* generado por {nombre_usuario} ({estado}).\n"
+                            f"Número de reporte: {numero_reporte}"
+                        ),
+                        parse_mode="Markdown"
+                    )
+            except Exception as e:
+                print(f"⚠️ No se pudo enviar el PDF a {chat_id}: {e}")
+
+        # 8. Eliminar archivo temporal
+        try:
+            os.remove(ruta_pdf)
+        except Exception as e:
+            print(f"⚠️ No se pudo eliminar el archivo temporal: {e}")
+        # Mostrar mensaje solo si es alerta roja
+        nivel_alerta = context.user_data.get("nivel_alerta", "").lower()
+        if nivel_alerta == "roja":
+            contacto = CONTACTOS_POR_TIPO.get(tipo_reporte, {})
+            nombre_contacto = contacto.get("nombre", "responsable")
+            telefono_contacto = contacto.get("telefono", "N/A")
+
+            await query.message.reply_text(
+                f"🚨 *Alerta roja registrada.*\nPor favor comuníquese con {nombre_contacto} al número: `{telefono_contacto}`",
+                parse_mode="Markdown"
+            )
+        # 9. Reiniciar flujo
+        return ESTADO_REINICIAR
+
+    except Exception as e:
+        logger.error(f"Error al confirmar el envío del reporte {numero_reporte}: {e}")
+        await query.message.reply_text(
+            f"⚠️ **Error al guardar** ⚠️\n"
+            f"Ocurrió un error al intentar guardar el reporte `{numero_reporte}`. Por favor, inténtelo de nuevo más tarde o contacte a soporte.\n"
+            f"Detalle: {e}",
+        )
+        return ESTADO_RESUMEN
+
+    
+async def eliminar_mensaje_anterior_usuario(update):
+    pregunta_id = update.effective_chat.get("pregunta_id")
+    if pregunta_id:
+        try:
+            await update.effective_chat.bot.delete_message(chat_id=update.effective_chat.id, message_id=pregunta_id)
+        except Exception as e:
+            print(f"⚠️ No se pudo borrar el mensaje anterior: {e}")
+
+
+
+async def borrar_pregunta_anterior(context, update):
+    """Borra el mensaje de la pregunta anterior si está registrado."""
+    chat_id = update.effective_chat.id
+    pregunta_id = context.user_data.pop("pregunta_id", None)
+
+    if pregunta_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=pregunta_id)
+        except telegram.error.BadRequest as e:
+            if "Message to delete not found" in str(e):
+                pass  # Silenciamos este error específico
+            else:
+                print(f"⚠️ Error al borrar la pregunta anterior: {e}")
+        except Exception as e:
+            print(f"⚠️ Otro error al borrar la pregunta anterior: {e}")
+
+
+async def manejar_post_modificacion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Finaliza el flujo de modificación, desactiva la bandera y redirige a la confirmación.
+    """
+    chat_id = update.effective_chat.id
+    
+    # 🔑 CORRECCIÓN CLAVE: Usamos un valor por defecto ('el campo') en caso de que 
+    # la clave 'campo_a_modificar' no se encuentre en user_data.
+    # El nombre de la variable puede ser 'campo' o 'campo_modificado' según tu archivo.
+    campo_modificado_key = context.user_data.pop('campo_a_modificar', None) 
+    
+    # 📝 Formatear la cadena para el mensaje (siempre debe ser un string)
+    campo_formateado = MAPEO_CAMPOS_MODIFICABLES.get(campo_modificado_key, 'el campo')
+    #campo_formateado = campo_modificado_key.replace('_', ' ').upper()
+
+    # 1. Borrar el mensaje de solicitud de modificación original (pregunta_modificacion_id)
+    pregunta_mod_id = context.user_data.pop("pregunta_modificacion_id", None)
+    if pregunta_mod_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=pregunta_mod_id)
+        except Exception:
+            # Fallo al borrar, pero continuamos
+            pass
+
+    # 2. Limpieza de banderas de estado
+    context.user_data.pop('en_modo_modificacion', None) 
+    context.user_data.pop('estado_anterior', None) 
+
+    await borrar_pregunta_anterior(context, update)
+
+    # 3. Mostrar confirmación de modificación
+    keyboard = [
+              
+        [InlineKeyboardButton("✍️ Seguir Modificando", callback_data="seguir_modificando")],
+        [InlineKeyboardButton("✅ Continuar ", callback_data="continuar_a_resumen")],
+    ]
+    
+    # Usamos la cadena formateada que ya sabemos que no es None.
+    mensaje = await update.effective_chat.send_message(
+        f"✅ ¡El campo **{campo_formateado}** Ha sido actualizado correctamente!\n\n¿Deseas seguir modificando o continuar?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+    context.user_data["pregunta_id"] = mensaje.message_id
+    
+    # 4. Retorna el estado de confirmación
+    return ESTADO_CONFIRMACION_MODIFICACION
+
+def crear_botones_confirmacion_modificacion() -> list[list[InlineKeyboardButton]]:
+    """Crea los botones de confirmación después de una modificación."""
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Continuar al resumen final", callback_data="continuar_a_resumen"),
+        ],
+        [
+            InlineKeyboardButton("✍️ Seguir modificando", callback_data="seguir_modificando"),
+        ]
+    ]
+    return keyboard
+
+def eliminar_estado_del_historial(context, estado=None):
+    """Elimina un estado específico del historial o limpia todo si no se especifica."""
+    if 'history_stack' not in context.user_data:
+        return
+    if estado:
+        context.user_data['history_stack'] = [
+            s for s in context.user_data['history_stack'] if s != estado
+        ]
+    else:
+        context.user_data['history_stack'] = []
+            
+                        
+
+def construir_contenido_pdf(datos: dict) -> list:
+    """Construye el contenido del recuadro del PDF según tipo y nivel."""
+    contenido = []
+
+    # 🟦 Datos generales
+    contenido.append(["Nombre del usuario", datos.get("nombre_usuario", "")])
+    contenido.append(["Estado", datos.get("estado", "")])
+
+    # 📋 Datos del reporte
+    contenido.append(["Nivel de alerta", datos.get("nivel", "")])
+    contenido.append(["Tipo de reporte", datos.get("tipo_reporte", "")])
+
+    nivel = datos.get("nivel", "").lower()
+    tipo = datos.get("tipo_reporte", "").lower()
+
+    # --- Lógica por nivel y tipo ---
+    if nivel == "verde":
+        if tipo == "operacional":
+            contenido.append(["Tipo de evento", datos.get("tipo_evento", "")])
+            contenido.append(["Descripción del evento", datos.get("descripcion", "") or datos.get("descripcion_evento", "")])
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                contenido.append(["Fecha y hora del evento", f"{fecha} {hora}"])
+            contenido.append(["Actores clave", datos.get("actores_clave", "")])
+            contenido.append(["Acciones tomadas", datos.get("acciones", "")])
+            contenido.append(["Verificado", datos.get("verificado", "")])
+            contenido.append(["Observaciones", datos.get("observaciones", "")])
+
+        elif tipo == "comunicacional":
+            contenido.append(["Tipo de evento", datos.get("tipo_evento", "")])
+            contenido.append(["Descripción del evento", datos.get("descripcion", "") or datos.get("descripcion_evento", "")])
+            tipo_medio = datos.get("tipo_medio", "")
+            medio_especifico = datos.get("medio_especifico", "") or datos.get("nombre_medio", "")
+            if tipo_medio:
+                linea_medio = f"{tipo_medio}"
+                if medio_especifico:
+                    linea_medio += f" - {medio_especifico}"
+                contenido.append(["📡 Tipo de medio", linea_medio])
+
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                contenido.append(["Fecha y hora del evento", f"{fecha} {hora}"])
+            contenido.append(["Actores clave", datos.get("actores_clave", "")])
+            contenido.append(["Contenido difundido", datos.get("contenido_difundido", "")])
+            contenido.append(["Verificado", datos.get("verificado", "")])
+            contenido.append(["Observaciones", datos.get("observaciones", "")])
+
+    elif nivel in ["amarilla", "naranja"]:
+        if tipo == "operacional":
+            contenido.append(["Tipo de evento", datos.get("tipo_evento", "")])
+            contenido.append(["Descripción del evento", datos.get("descripcion", "") or datos.get("descripcion_evento", "")])
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                contenido.append(["Fecha y hora del evento", f"{fecha} {hora}"])
+            contenido.append(["Actores clave", datos.get("actores_clave", "")])
+            contenido.append(["Recursos comprometidos", datos.get("recursos", "")])
+            contenido.append(["Acciones tomadas", datos.get("acciones", "")])
+            contenido.append(["Violencia", datos.get("violencia", "")])
+            contenido.append(["Amenaza a la vida", datos.get("amenaza_vida", "")])
+            contenido.append(["Verificado", datos.get("verificado", "")])
+            contenido.append(["Observaciones", datos.get("observaciones", "")])
+
+        elif tipo == "comunicacional":
+            contenido.append(["Tipo de evento", datos.get("tipo_evento", "")])
+            contenido.append(["Descripción del evento", datos.get("descripcion", "") or datos.get("descripcion_evento", "")])
+            tipo_medio = datos.get("tipo_medio", "")
+            medio_especifico = datos.get("medio_especifico", "") or datos.get("nombre_medio", "")
+            if tipo_medio:
+                linea_medio = f"{tipo_medio}"
+                if medio_especifico:
+                    linea_medio += f" - {medio_especifico}"
+                contenido.append(["📡 Tipo de medio", linea_medio])
+            fecha = datos.get("fecha_publicacion", "")
+            hora = datos.get("hora_publicacion", "")
+            if fecha or hora:
+                contenido.append(["Fecha y hora del evento", f"{fecha} {hora}"])
+            contenido.append(["Actores clave", datos.get("actores_clave", "")])
+            contenido.append(["Contenido difundido", datos.get("contenido_difundido", "")])
+            contenido.append(["Audiencia afectada", datos.get("audiencia_afectada", "")])
+            contenido.append(["Violencia", datos.get("violencia", "")])
+            contenido.append(["Amenaza a la vida", datos.get("amenaza_vida", "")])
+            contenido.append(["Verificado", datos.get("verificado", "")])
+            contenido.append(["Observaciones", datos.get("observaciones", "")])
+
+    elif nivel == "roja":
+        contenido.append(["Tipo de evento", datos.get("tipo_evento", "")])
+        contenido.append(["Violencia", datos.get("violencia", "")])
+        contenido.append(["Amenaza a la vida", datos.get("amenaza_vida", "")])
+        contenido.append(["Verificado", datos.get("verificado", "")])
+        contenido.append(["Observaciones", datos.get("observaciones", "")])
+
+    # ✅ Multimedia si está finalizada
+    if datos.get("multimedia_finalizada"):
+        multimedia_list = datos.get("recursos_multimedia", [])
+        if isinstance(multimedia_list, list) and len(multimedia_list) > 0:
+            contenido.append(["Multimedia", f"{len(multimedia_list)} archivo(s)"])
+        else:
+            contenido.append(["Multimedia", "Sin multimedia"])
+
+    return contenido
+

@@ -1,0 +1,1798 @@
+# handlers/conversation.py
+
+from telegram import Update, InlineKeyboardMarkup,InlineKeyboardButton,ReplyKeyboardRemove,WebAppInfo
+from telegram.ext import ContextTypes, ConversationHandler,ConversationHandler
+import psycopg2
+import telegram.error
+from datetime import datetime
+import json
+import traceback 
+import logging
+logger = logging.getLogger("AlertasTempranasBot")
+from .utils import(
+    
+     merge_keyboard_with_navigation, crear_botones_navegacion,obtener_conexion_db,guardar_en_historial,verificar_modificacion,
+    opciones_evento_verde_operacional,opciones_evento_verde_comunicacional,opciones_evento_critico,construir_resumen_parcial,
+    actualizar_resumen_estatico,generar_numero_reporte,construir_resumen_parcial,crear_botones_navegacion,
+    borrar_pregunta_anterior,eliminar_estado_del_historial,manejar_post_modificacion   
+     )
+
+
+# --- IMPORTS DE MÓDULOS REORGANIZADOS ---
+from configuracion.constantes import (
+    ESTADO_CEDULA,ESTADO_NIVEL, ESTADO_TIPO_REPORTE, ESTADO_VERDE_OP_DESC, ESTADO_VERDE_OP_ACCIONES,
+    ESTADO_VERIFICADO,ESTADO_OBSERVACIONES,ESTADO_ESPERANDO_MULTIMEDIA,ESTADO_VIOLENCIA,ESTADO_TIPO_EVENTO_TEXTO_ROJA,
+    ESTADO_TIPO_EVENTO,ESTADO_TIPO_EVENTO_COMUNICACIONAL,ESTADO_DESCRIPCION_COMUNICACIONAL, ESTADO_TIPO_MEDIO,
+    ESTADO_DESCRIPCION, ESTADO_ACCIONES,ESTADO_RECURSOS,ESTADO_MEDIO_ESPECIFICO,ESTADO_CONTENIDO_DIFUNDIDO,ESTADO_AUDIENCIA_AFECTADA,
+    ESTADO_AMENAZA,ESTADO_REINICIAR,ESTADO_ESPERANDO_FECHA_HORA,ESTADO_ACTORES_CLAVE,ESTADO_FECHA_PUBLICACION,ESTADO_RESUMEN,ESTADO_ACTORES_CLAVE,ESTADO_CONFIRMACION_MODIFICACION     
+
+
+)
+
+
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< INICIO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Inicia la conversación y pide la cédula."""
+    
+    user = update.effective_user
+    
+    # 1. Guarda el nombre de usuario TEMPORALMENTE antes de limpiar
+    user_name = user.full_name or user.username or "Usuario Desconocido"
+    
+    # 2. Reinicia los datos de la sesión anterior
+    # Si esta línea se ejecuta, BORRA cualquier dato guardado anteriormente.
+    context.user_data.clear()
+
+# 3. Vuelve a guardar el nombre de usuario, asegurando que esté disponible para la nueva sesión
+    # ❌ ESTA LÍNEA ES CRÍTICA Y DEBE EJECUTARSE DESPUÉS DEL CLEAR
+    context.user_data["nombre_usuario"] = user_name
+
+    welcome_message = "Bienvenido al sistema automatizado de Reportes de alertas tempranas de FONPESCA. Este canal es exclusivo para personal autorizado.\n\nPor favor, ingresa su número de cédula para continuar."
+    if update.message:
+        await update.message.reply_text(welcome_message)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(welcome_message)
+
+    return ESTADO_CEDULA
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< CEDULA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_cedula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la cédula y pide el nivel de reporte, previa autenticación."""
+    cedula_input = update.message.text
+
+       # 1. Guarda el estado actual en el historial antes de avanzar
+    
+    guardar_en_historial(context, ESTADO_CEDULA)
+    
+    # Creamos el keyboard de reintento para ambos casos de error
+    keyboard = [[InlineKeyboardButton("🔄 Intentar de nuevo", callback_data="reintentar_cedula")]]
+    reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+    # Valida que la cédula sea un número
+    if not cedula_input.isdigit():
+        await update.message.reply_text("❌ ¡Cédula inválida, ingresa solo números!\n\nPor favor, ingresa nuevamente su número de cédula para continuar. ")
+
+        return ESTADO_CEDULA # Se mantiene en el mismo estado para que pueda reintentar
+    
+    # Autenticación basada en la cédula, consultando la base de datos
+    conn = obtener_conexion_db()
+    nombre_usuario = None  # Inicializamos a None
+    
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                # Consulta para verificar la cédula
+                query = "SELECT nombre, estado FROM usuarios WHERE cedula = %s;"
+                cursor.execute(query, (cedula_input,))
+                result = cursor.fetchone()
+                
+                if result:
+                    nombre_usuario = result[0]
+                    estado = result[1]
+
+                else:
+                    await update.message.reply_text("❌ Acceso denegado. La cédula ingresada no está autorizada. \n\n Presione cualquier tecla o número para iniciar de nuevo.")
+                    context.user_data.clear() # Limpia los datos de la conversación
+                    conn.close()
+                    return ConversationHandler.END # Opcional: Se podría enviar a un estado de reintento
+        except psycopg2.Error as err:
+            logger.error(f"Error al verificar la cédula en la base de datos: {err}")
+            await update.message.reply_text("Ocurrió un error al verificar tu cédula. Por favor, inténtalo de nuevo más tarde.")
+            context.user_data.clear()
+            if conn:
+                conn.close()
+            return ConversationHandler.END
+        finally:
+            if conn:
+                conn.close()
+    
+    context.user_data["estado"] = estado  # si lo tienes en la tabla
+    # Si la autenticación es exitosa, se guarda la cédula y se continúa
+    if nombre_usuario:
+        context.user_data["cedula"] = cedula_input
+        personalized_welcome = f"¡Hola, {nombre_usuario}! Autenticación exitosa. ¿Qué nivel tiene el reporte?"
+        
+        
+        reply_markup_nivel = InlineKeyboardMarkup(
+         merge_keyboard_with_navigation([
+
+            [InlineKeyboardButton("🟢 Verde", callback_data="Verde")],
+            [InlineKeyboardButton("🟡 Amarilla", callback_data="Amarilla")],
+            [InlineKeyboardButton("🟠 Naranja", callback_data="Naranja")],
+            [InlineKeyboardButton("🚨 Roja", callback_data="Roja")],
+        ])
+        )
+        
+        await update.message.reply_text(personalized_welcome, reply_markup=reply_markup_nivel)
+
+        return ESTADO_NIVEL
+    else:
+        # Esto se ejecuta si la cédula no se encuentra y el flujo no terminó antes.
+        # En el caso de cédula inválida, el bot ya se queda en ESTADO_CEDULA y vuelve a pedirla.
+        # Este else maneja el caso de que la cédula no esté en la base de datos
+        await update.message.reply_text("❌ Acceso denegado. La cédula ingresada no está autorizada.")
+        return ConversationHandler.END
+
+async def reintentar_cedula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el botón de reintentar y reinicia la conversación."""
+    query = update.callback_query
+    await query.answer()
+
+
+    context.user_data.clear()
+    
+    await query.message.reply_text("Ingrese nuevamente la cédula ")
+
+    return ESTADO_CEDULA
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MANEJAR NIVEL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def manejar_nivel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    
+    query = update.callback_query
+    await query.answer()
+
+
+    
+    context.user_data['nivel'] = query.data.title()
+# <<<<<<<<<<<<<<<< BLOQUE GUARDAR MODIFICADO>>>>>>>>>>>>>>>>>
+    modificacion = await verificar_modificacion(update, context)
+    if modificacion:
+        return modificacion
+# <<<<<<<<<<<<<<<< FIN DEL  BLOQUE GUARDAR MODIFICADO >>>>>>>>>>>>>>>>>
+
+# Mostrar resumen inicial solo una vez
+    if "resumen_id" not in context.user_data:
+        resumen = construir_resumen_parcial(context)
+        mensaje_resumen = await query.message.reply_text(resumen, parse_mode="HTML")
+        context.user_data["resumen_id"] = mensaje_resumen.message_id
+
+    # eliminar_mensaje_anterior
+
+    await borrar_pregunta_anterior(context, update)
+ #  Guarda el estado actual en el historial antes de avanzar
+    guardar_en_historial(context, ESTADO_NIVEL)
+    
+
+   # El teclado de Tipo de Reporte
+    keyboard = [
+        [InlineKeyboardButton("1. Operacional", callback_data="operacional")],
+        [InlineKeyboardButton("2. Comunicacional", callback_data="comunicacional")]
+    ]
+    
+    # 2. Fusionar el teclado con los botones de navegación
+    reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard)) # <-- MODIFICADO
+    
+    # ✅ Eliminar el mensaje de selección de nivel
+    try:
+        if query.message:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+    except Exception as e:
+        print(f"⚠️ No se pudo borrar el mensaje de nivel: {e}")
+        
+    await update.callback_query.message.reply_text(
+        " Porfavor, Selecciona el **Tipo de Reporte**:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+
+    return ESTADO_TIPO_REPORTE
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_TIPO_REPORTE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def manejar_tipo_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+
+    context.user_data["tipo_reporte"] = query.data.lower()
+
+# Actualizar resumen
+    await actualizar_resumen_estatico(update, context)
+
+   # eliminar_mensaje_anterior
+
+    await borrar_pregunta_anterior(context, update)
+# 4. guardar_en_historial
+    guardar_en_historial(context, ESTADO_TIPO_REPORTE)
+    
+    nivel = context.user_data.get("nivel", "").lower()
+    tipo = context.user_data.get("tipo_reporte", "").lower()
+
+    # 1. BIFURCACIÓN CLAVE SEGÚN EL TIPO DE REPORTE
+    if tipo == "comunicacional":
+        
+        if nivel == "verde":
+           opciones = opciones_evento_verde_comunicacional
+        else:
+            opciones = opciones_evento_critico  # para amarilla, naranja, roja
+
+        mensaje_pregunta = await query.message.reply_text(
+        "📌 Por favor, selecciona el **tipo de evento comunicacional** que deseas reportar:",
+        reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation(opciones)),
+        parse_mode='Markdown'
+         )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+        eliminar_estado_del_historial(context, ESTADO_TIPO_REPORTE)
+
+        return ESTADO_TIPO_EVENTO_COMUNICACIONAL
+
+    elif tipo == "operacional":
+        
+        # Flujo Operacional o Roja:
+        # ✅ CORRECCIÓN SINTÁCTICA: Se eliminan los paréntesis ()
+        if nivel == "verde":
+            opciones = opciones_evento_verde_operacional
+        else:
+            opciones = opciones_evento_critico
+            
+        siguiente_estado = ESTADO_TIPO_EVENTO 
+
+        mensaje_pregunta = await query.message.reply_text(
+            "📌 Por favor, selecciona el **tipo de evento operacional** que deseas reportar:",
+            reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation(opciones)),
+            parse_mode='Markdown'
+        )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+        return siguiente_estado
+    
+    # Manejo de casos no esperados
+    return ConversationHandler.END
+
+    
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_TIPO_EVENTO_COMUNICACIONAL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_tipo_evento_comunicacional(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el tipo de evento comunicacional."""
+
+    # 🔍 Detectar si viene de modificación (SETUP)
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("tipo_evento", None)  # 🔥 Eliminar respuesta anterior
+        context.user_data['campo_a_modificar'] = 'tipo_evento' 
+
+    # 🔄 Capturar dato según origen
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        # Nota: Se capitaliza y reemplaza '_' por ' ' si viene de un CallbackQuery
+        context.user_data["tipo_evento"] = query.data.replace("_", " ").capitalize()
+        mensaje_respuesta = query.message
+    else:
+        mensaje_respuesta = update.message
+        context.user_data["tipo_evento"] = update.message.text.strip()
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior (necesario para ambos flujos)
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+    
+    if context.user_data.get("en_modo_modificacion"):
+            
+            # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+            if update.message:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    # Si esto falla, verifica los permisos del bot en el chat.
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                    
+            # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+            return await manejar_post_modificacion(update, context)
+        
+    else:
+            # ➡️ Flujo NORMAL:
+            
+            # 5a. Guardar en historial (para el botón 'Volver')
+            guardar_en_historial(context, ESTADO_TIPO_EVENTO_COMUNICACIONAL)
+        
+        # 2. 📝 Pregunta siguiente: descripción del evento
+            mensaje_pregunta = await mensaje_respuesta.reply_text(
+                "Por favor, ingresa la descripción del evento:",
+                reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+            )
+            context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+
+            # 3. Retornar el siguiente estado del flujo normal
+            return ESTADO_DESCRIPCION_COMUNICACIONAL
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_TIPO_EVENTO_TEXTO_ROJA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_tipo_evento_texto_roja(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el tipo de evento para alerta roja (texto libre)."""
+
+    # 🔐 1. Detectar y configurar modo modificación si aplica (SETUP)
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("tipo_evento", None)  # Eliminar respuesta anterior
+        context.user_data['campo_a_modificar'] = 'tipo_evento' 
+
+    # 📝 2. Capturar texto (Aplica a ambos flujos)
+    texto = update.message.text.strip()
+    context.user_data["tipo_evento"] = texto
+
+    # ✅ 3. Verificar modificación desde resumen (INTERRUPCIÓN por navegación)
+    modificacion = await verificar_modificacion(update, context)
+    if modificacion:
+        # Se elimina el estado del historial si es una navegación que interrumpe el flujo de entrada
+        eliminar_estado_del_historial(context, ESTADO_TIPO_EVENTO_TEXTO_ROJA)
+        return modificacion
+
+    # 📋 4. Actualizar resumen y limpiar pregunta anterior (Aplica a ambos flujos)
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        # ✅ Flujo de MODIFICACIÓN:
+        # Se capturó el dato. Se llama al post-manejador para limpiar banderas 
+        # y pedir la confirmación de la modificación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        # 5a. Guardar el estado actual en el historial.
+        guardar_en_historial(context, ESTADO_TIPO_EVENTO_TEXTO_ROJA)
+
+        # 5b. 🧾 Asignar valores predeterminados para alerta roja (para saltar pasos)
+        context.user_data["descripcion_evento"] = "Alerta de máxima alerta"
+        context.user_data["recursos_comprometidos"] = "No aplica"
+        context.user_data["acciones_tomadas"] = "No aplica"
+        context.user_data["observaciones"] = "Alerta de máxima alerta"
+        
+        # 5c. 📌 Pregunta siguiente: violencia
+        keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await update.message.reply_text("¿Hubo violencia?", reply_markup=reply_markup)
+
+        # 5d. Retornar el siguiente estado
+        return ESTADO_VIOLENCIA
+
+
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_DESCRIPCION_COMUNICACIONAL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+# handlers/conversacion.py
+
+async def manejar_descripcion_comunicacional(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la descripción del evento comunicacional y pasa a la pregunta de Tipo de Medio (botones)."""
+    
+    # 📝 1. Capturar texto y guardar dato
+    texto = update.message.text.strip()
+    context.user_data["descripcion"] = texto
+    
+    # 🔐 2. Flujo de Modificación (Mantiene la lógica de modificación)
+    if context.user_data.get("en_modo_modificacion") or context.user_data.get("pregunta_modificacion_id"):
+        
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception:
+                pass 
+
+        context.user_data['campo_a_modificar'] = 'descripcion' 
+        return await manejar_post_modificacion(update, context)
+    
+    # ➡️ 3. Flujo NORMAL (FIX: Envía botones y retorna el estado)
+    else:
+        
+        # 3.1. Guardar en historial
+        guardar_en_historial(context, ESTADO_DESCRIPCION_COMUNICACIONAL)
+        
+        # 3.2. Limpieza y Actualización
+        await actualizar_resumen_estatico(update, context)
+        await borrar_pregunta_anterior(context, update) 
+
+        
+        # 5. Enviar la siguiente pregunta: TIPO DE MEDIO (Paso correcto para Comunicacional)
+        
+        keyboard = [
+            [InlineKeyboardButton("Red Social", callback_data="red_social")],
+            [InlineKeyboardButton("Prensa", callback_data="prensa")],
+            [InlineKeyboardButton("Radio", callback_data="radio")],
+            [InlineKeyboardButton("Televisión", callback_data="television")],
+        ]
+        
+        mensaje = await update.message.reply_text(
+            "📡 Por favor, selecciona el **Tipo de medio**:",
+            reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard)),
+            parse_mode='Markdown'
+        )
+        context.user_data["pregunta_id"] = mensaje.message_id
+        
+        # 6. Retornar el estado correcto
+        # ✅ CORRECCIÓN CLAVE: Debe ser ESTADO_TIPO_MEDIO para seguir el flujo Comunicacional.
+        return ESTADO_TIPO_MEDIO
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_DESCRIPCION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_descripcion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la descripción y salta la pregunta de recursos para la alerta Verde operacional."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("descripcion", None)
+        context.user_data['campo_a_modificar'] = 'descripcion'
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["descripcion"] = texto
+    context.user_data.setdefault("recursos_multimedia", [])
+
+
+    # 🔑 Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN: Eliminar el mensaje actual del usuario
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL: (Tu código original)
+        guardar_en_historial(context, ESTADO_DESCRIPCION)
+        return ESTADO_RECURSOS # o ESTADO_ACCIONES
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DESCRIPCION_EVENTO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_descripcion_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la descripción del evento y avanza a solicitar las acciones tomadas."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("descripcion_evento", None)
+        context.user_data['campo_a_modificar'] = 'descripcion_evento'
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["descripcion_evento"] = texto
+
+
+    # 🔑 Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN: Eliminar el mensaje actual del usuario
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL: (Tu código original)
+        guardar_en_historial(context, ESTADO_DESCRIPCION)
+        return await preguntar_fecha_webapp(update, context)
+   
+    
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_VERDE_OP_DESC >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+#  ---
+async def manejar_desc_verde_op(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Guarda la descripción del evento y pide las acciones tomadas (Verde Operacional)."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("descripcion_evento", None)
+        context.user_data['campo_a_modificar'] = 'descripcion_evento'
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["descripcion_evento"] = texto
+
+    # ... (omito verificacion y actualizacion de resumen, ya que estaban bien)
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN: Eliminar el mensaje actual del usuario
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL: (Tu código original)
+        guardar_en_historial(context, ESTADO_VERDE_OP_DESC)
+        # ... (código para preguntar acciones tomadas)
+        # ...
+        return ESTADO_VERDE_OP_ACCIONES
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< manejar_tipo_medio >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def manejar_tipo_medio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el tipo de medio y avanza al medio específico."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 1. Captura y doble asignación (Tipo Evento/Medio)
+    tipo_medio = query.data.replace("_", " ").capitalize()
+    context.user_data["tipo_medio"] = tipo_medio
+    context.user_data["tipo_evento"] = tipo_medio  
+
+    # 2. Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update) 
+
+    # 🔐 Flujo de Modificación: SI estamos en modificación, NO LLAMAMOS al post-manejador. 
+    # Simplemente dejamos que el código pase a la bifurcación 3.3.
+    if context.user_data.get("en_modo_modificacion") or context.user_data.get("pregunta_modificacion_id"):
+        pass # ⚠️ Esto permite que el flujo continúe al siguiente paso (Medio Específico)
+        
+    # ➡️ Flujo Normal (Solo aquí guardamos historial)
+    else:
+        guardar_en_historial(context, ESTADO_TIPO_MEDIO)
+
+
+    # 3.3. Bifurcación para la siguiente pregunta (Medio Específico) - LÓGICA DE AVANCE
+    tipo_medio_lower = tipo_medio.lower()
+    
+    if tipo_medio_lower == "red social":
+        # ... (Opciones de Redes Sociales)
+        opciones_redes = [
+            [InlineKeyboardButton("WhatsApp", callback_data="WhatsApp")],
+            [InlineKeyboardButton("Telegram", callback_data="Telegram")],
+            [InlineKeyboardButton("Facebook", callback_data="Facebook")],
+            [InlineKeyboardButton("Instagram", callback_data="Instagram")],
+            [InlineKeyboardButton("TikTok", callback_data="TikTok")],
+            [InlineKeyboardButton("YouTube", callback_data="YouTube")],
+            [InlineKeyboardButton("X (Twitter)", callback_data="X")]
+        ]
+        
+        mensaje = await query.message.reply_text(
+            "📱 Por favor, selecciona la red social específica:",
+            reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation(opciones_redes))
+        )
+        context.user_data["pregunta_id"] = mensaje.message_id
+        return ESTADO_MEDIO_ESPECIFICO # <--- AVANZA
+        
+    else:
+        # Pide texto para Prensa, TV, Otro
+        mensaje = await query.message.reply_text(
+            f"📰 Por favor, ingresa el nombre del medio específico: (**{tipo_medio}**)",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion()),
+            parse_mode="Markdown"
+        )
+        context.user_data["pregunta_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_TIPO_MEDIO)
+        return ESTADO_MEDIO_ESPECIFICO # <--- AVANZA
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_MEDIO_ESPECIFICO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+# Esta función es el handler para ESTADO_MEDIO_ESPECIFICO
+async def manejar_medio_especifico(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Maneja el nombre del medio específico. Si es modificación, finaliza el sub-flujo 
+    y llama a manejar_post_modificacion.
+    """
+    
+    # 1. Captura de dato (Maneja botón de Red Social o texto)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        nombre_medio = query.data 
+        mensaje_respuesta = query.message
+        await borrar_pregunta_anterior(context, update)
+    else:
+        nombre_medio = update.message.text.strip()
+        mensaje_respuesta = update.message
+
+    context.user_data["nombre_medio"] = nombre_medio
+
+    # 2. Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update) 
+
+    # Si fue texto, borra el mensaje del usuario y la pregunta
+    if update.message:
+        await borrar_pregunta_anterior(context, update) 
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        
+        # 🔐 CRÍTICO: Si estamos en modo modificación, terminamos el proceso aquí.
+    if context.user_data.get("en_modo_modificacion") or context.user_data.get("pregunta_modificacion_id"):
+            
+        # Llama al post-manejador para enviar la pregunta de "Seguir editando / Continuar"
+        return await manejar_post_modificacion(update, context)
+    
+    # ➡️ Flujo Normal
+    else:
+        # ... Flujo Normal: Guardar historial y avanzar al siguiente estado
+        guardar_en_historial(context, ESTADO_MEDIO_ESPECIFICO)
+        
+        # Ejemplo: Pregunta siguiente (ajusta el estado)
+        mensaje_pregunta = await mensaje_respuesta.reply_text(
+            "📝 Por favor, ingrese el contenido difundido:",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+        )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+        return ESTADO_CONTENIDO_DIFUNDIDO
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_CONTENIDO_DIFUNDIDO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_contenido_difundido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el contenido difundido y omite las preguntas de violencia para la alerta Verde."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("contenido_difundido", None)
+        context.user_data['campo_a_modificar'] = 'fecha_publicacion' 
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["contenido_difundido"] = texto
+
+# 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    if context.user_data.get("en_modo_modificacion"):
+            
+            # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+            if update.message:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    # Si esto falla, verifica los permisos del bot en el chat.
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                    
+            # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+            return await manejar_post_modificacion(update, context)
+        
+    else:
+            # ➡️ Flujo NORMAL:
+            
+            # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_CONTENIDO_DIFUNDIDO)
+
+    
+        # 🔀 Flujo según nivel
+        nivel = context.user_data.get("nivel", "").lower()
+
+        if nivel == "verde":
+            context.user_data["audiencia_afectada"] = "No aplica (Alerta Verde)"
+            context.user_data["violencia"] = "No"
+            context.user_data["amenaza_vida"] = "No"
+
+            keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+            reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+            await update.message.reply_text("¿El evento está verificado?", reply_markup=reply_markup)
+            eliminar_estado_del_historial(context, ESTADO_CONTENIDO_DIFUNDIDO)
+            return ESTADO_VERIFICADO
+        else:
+            mensaje = await update.message.reply_text(
+                "Por favor, ingresa la audiencia afectada:",
+                reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+            )
+            context.user_data["pregunta_id"] = mensaje.message_id
+            eliminar_estado_del_historial(context, ESTADO_CONTENIDO_DIFUNDIDO)
+            return ESTADO_AUDIENCIA_AFECTADA
+        
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_AUDIENCIA_AFECTADA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_audiencia_afectada(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la audiencia afectada y transita al estado compartido de violencia."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("audiencia_afectada", None)
+        context.user_data['campo_a_modificar'] = 'audiencia_afectada' 
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["audiencia_afectada"] = texto
+
+    
+    nivel = context.user_data.get("nivel", "").lower()
+
+    if nivel == "verde":
+        # 🟢 Saltar violencia y amenaza
+        context.user_data["violencia"] = "No"
+        context.user_data["amenaza_vida"] = "No"
+
+        keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await update.message.reply_text("¿El evento está verificado?", reply_markup=reply_markup)
+        eliminar_estado_del_historial(context, ESTADO_AUDIENCIA_AFECTADA)
+        return ESTADO_VERIFICADO
+    else:
+        # 🟡🟠🔴 Preguntar por violencia
+        
+        # 📋 Actualizar resumen y limpiar pregunta anterior
+        await actualizar_resumen_estatico(update, context)
+        await borrar_pregunta_anterior(context, update)
+
+        if context.user_data.get("en_modo_modificacion"):
+                
+                # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+                if update.message:
+                    try:
+                        await update.message.delete()
+                    except Exception as e:
+                        # Si esto falla, verifica los permisos del bot en el chat.
+                        print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                        
+                # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+                return await manejar_post_modificacion(update, context)
+            
+        else:
+                # ➡️ Flujo NORMAL:
+                
+                # 5a. Guardar en historial (para el botón 'Volver')
+            guardar_en_historial(context, ESTADO_AUDIENCIA_AFECTADA)
+
+            keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+            reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+            await update.message.reply_text("¿Hubo violencia?", reply_markup=reply_markup)
+            eliminar_estado_del_historial(context, ESTADO_AUDIENCIA_AFECTADA)
+            return ESTADO_VIOLENCIA
+        
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_VIOLENCIA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_violencia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la respuesta sobre la violencia."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("violencia", None)
+        context.user_data['campo_a_modificar'] = 'violencia' 
+
+    # 📝 Capturar respuesta
+    context.user_data["violencia"] = query.data.capitalize()
+
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+     # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                # Si esto falla, verifica los permisos del bot en el chat.
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_VIOLENCIA)
+
+        # ☠️ Pregunta siguiente: amenaza a la vida
+        keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await query.message.reply_text("¿Hubo amenaza a la vida?", reply_markup=reply_markup)
+        eliminar_estado_del_historial(context, ESTADO_VIOLENCIA)
+        return ESTADO_AMENAZA
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_AMENAZA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_amenaza(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la respuesta sobre amenaza a la vida y finaliza con la pregunta de verificación."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("amenaza_vida", None)
+        context.user_data['campo_a_modificar'] = 'amenaza_vida' 
+
+    # 📝 Capturar respuesta
+    context.user_data["amenaza_vida"] = query.data
+
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+     # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                # Si esto falla, verifica los permisos del bot en el chat.
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_AMENAZA)
+
+        # 🔍 Pregunta siguiente: verificación
+        pregunta = "¿El evento está verificado?"
+        keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await query.message.reply_text(pregunta, reply_markup=reply_markup)
+        eliminar_estado_del_historial(context, ESTADO_AMENAZA)
+        return ESTADO_VERIFICADO
+        
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_VERIFICADO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_verificado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la respuesta de la verificación y pasa a las observaciones."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("verificado", None)
+        context.user_data['campo_a_modificar'] = 'verificado' 
+
+
+    # 📝 Capturar respuesta
+    context.user_data["verificado"] = query.data
+
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await borrar_pregunta_anterior(context, update)
+    await actualizar_resumen_estatico(update, context)
+
+    
+
+    
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except Exception as e:
+                # Si esto falla, verifica los permisos del bot en el chat.
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_VERIFICADO)
+
+        # 📝 Pregunta siguiente: observaciones
+        pregunta = "Por favor, ingrese sus observaciones:"
+        keyboard = [[InlineKeyboardButton("No tengo observaciones, continuar", callback_data="no_observaciones")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await query.message.reply_text(pregunta, reply_markup=reply_markup)
+
+        eliminar_estado_del_historial(context, ESTADO_VERIFICADO)
+        return ESTADO_OBSERVACIONES
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_OBSERVACIONES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_observaciones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja las observaciones y pide multimedia."""
+    
+    # 🔑 1. Detectar y configurar modo modificación si aplica (SETUP)
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("observaciones", None)
+        context.user_data['campo_a_modificar'] = 'observaciones' 
+
+    # 🔍 2. Capturar y guardar valor (Texto o Callback)
+    observaciones = "Sin observaciones"
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        # Se asume que el único callback relevante aquí es "No tengo observaciones"
+        # Si tienes otros callbacks, deberás manejarlos aquí.
+        
+    elif update.message:
+        texto = update.message.text.strip()
+        observaciones = texto if texto else "Sin observaciones"
+    
+    # Guardar el valor capturado.
+    context.user_data["observaciones"] = observaciones
+
+
+    # 📋 4. Actualizar resumen y limpiar pregunta anterior (Borra la pregunta del BOT)
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (si es texto)
+        if update.message:
+            try:
+                await update.message.delete()
+            except telegram.error.BadRequest as e:
+                # Ignorar específicamente el error "Message to delete not found" (código 400 Bad Request)
+                if "message to delete not found" not in str(e).lower():
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_OBSERVACIONES)
+        
+        # 5b. 📎 Pregunta siguiente: multimedia
+        botones = [[InlineKeyboardButton("➡️ Continuar", callback_data="continuar_multimedia")]]
+        # Se asume que merge_keyboard_with_navigation crea la botonera
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(botones)) 
+
+        # NOTA: Usar update.effective_chat.send_message funciona tanto para update.message como para update.callback_query
+        mensaje = await update.effective_chat.send_message(
+            "📎 Por favor, adjunta hasta un máximo de 5 archivos de imágenes o videos. Si no tienes archivos, selecciona 'Continuar'.",
+            reply_markup=reply_markup
+        )
+
+        context.user_data["pregunta_id"] = mensaje.message_id
+        context.user_data.setdefault("recursos_multimedia", []) # Asegurar que el array existe
+
+        return ESTADO_ESPERANDO_MULTIMEDIA
+
+
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_ESPERANDO_MULTIMEDIA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+MAX_ARCHIVOS = 5
+
+async def manejar_multimedia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la subida de archivos multimedia, documentos y audios."""
+
+    mensaje = update.message
+    if not mensaje:
+        return ESTADO_ESPERANDO_MULTIMEDIA
+
+    # 🧰 Asegura que el array exista
+    recursos_list = context.user_data.setdefault("recursos_multimedia", [])
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data["campo_a_modificar"] = "recursos_multimedia"
+
+        # 🔁 Reiniciar solo una vez
+        if not context.user_data.get("modificacion_multimedia_iniciada"):
+            context.user_data["recursos_multimedia"] = []
+            recursos_list = context.user_data["recursos_multimedia"]
+            context.user_data["modificacion_multimedia_iniciada"] = True
+
+    # 📎 Captura de archivo
+    file_id = None
+    if mensaje.photo:
+        file_id = mensaje.photo[-1].file_id
+    elif mensaje.video:
+        file_id = mensaje.video.file_id
+    elif mensaje.document:
+        file_id = mensaje.document.file_id
+    elif mensaje.audio:
+        file_id = mensaje.audio.file_id
+    else:
+        await mensaje.reply_text("🚫 Por favor, envía solo imágenes, videos, documentos o audios.")
+        return ESTADO_ESPERANDO_MULTIMEDIA
+
+    # ✅ Guardar archivo si no está duplicado
+    if file_id not in recursos_list:
+        recursos_list.append(file_id)
+
+    total_actual = len(recursos_list)
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    # ✅ Construir mensaje dinámico
+    if total_actual >= MAX_ARCHIVOS:
+        mensaje_respuesta = (
+            f"🎉 **Límite alcanzado.** Has adjuntado {MAX_ARCHIVOS} archivos.\n"
+            "Presiona '➡️ Continuar' para guardar los cambios."
+        )
+    else:
+        restantes = MAX_ARCHIVOS - total_actual
+        plural = "archivo" if restantes == 1 else "archivos"
+        mensaje_respuesta = (
+            f"✅ **Archivo recibido** ({total_actual}/{MAX_ARCHIVOS}). "
+            f"Puedes adjuntar **{restantes}** {plural} más, o presiona '➡️ Continuar' para guardar los cambios."
+        )
+
+    # 🧾 Enviar mensaje
+    await mensaje.reply_text(
+        mensaje_respuesta,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➡️ Continuar", callback_data="continuar_multimedia")]
+        ]),
+        parse_mode="Markdown"
+    )
+
+    # 🔁 Flujo de modificación: NO cerrar aún, esperar botón
+    if context.user_data.get("en_modo_modificacion"):
+        return ESTADO_ESPERANDO_MULTIMEDIA
+
+    # ➡️ Flujo normal
+    guardar_en_historial(context, ESTADO_ESPERANDO_MULTIMEDIA)
+    eliminar_estado_del_historial(context, ESTADO_ESPERANDO_MULTIMEDIA)
+    return ESTADO_ESPERANDO_MULTIMEDIA
+
+async def continuar_multimedia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Finaliza la etapa multimedia y muestra el resumen final con opciones de envío o modificación."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🚨 FLUJO DE MODIFICACIÓN
+    if context.user_data.get("pregunta_modificacion_id") or context.user_data.get("en_modo_modificacion"):
+
+        # 1. Borrar la pregunta del bot si existe
+        pregunta_id = context.user_data.pop("pregunta_id", None)
+        if pregunta_id:
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=pregunta_id
+                )
+            except Exception:
+                pass  # Ignorar errores de borrado
+
+        # 2. Asegurar que la lista exista (aunque esté vacía)
+        context.user_data.setdefault("recursos_multimedia", [])
+
+        # 3. Limpiar bandera de reinicio de modificación
+        context.user_data.pop("modificacion_multimedia_iniciada", None)
+
+        # 4. Actualizar resumen
+        await actualizar_resumen_estatico(update, context)
+
+        # 5. Fijar campo y redirigir al flujo de post-modificación
+        context.user_data["campo_a_modificar"] = "recursos_multimedia"
+        return await manejar_post_modificacion(update, context)
+
+    # ----------------------------------------------------
+    # FLUJO NORMAL
+    # ----------------------------------------------------
+
+    # 1. Borrar mensajes anteriores del bot
+    for key in ["pregunta_id", "resumen_id"]:
+        mensaje_id = context.user_data.pop(key, None)
+        if mensaje_id:
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=mensaje_id
+                )
+            except Exception:
+                pass
+
+    # 2. Marcar etapa multimedia como finalizada
+    context.user_data["multimedia_finalizada"] = True
+    guardar_en_historial(context, ESTADO_ESPERANDO_MULTIMEDIA)
+    await actualizar_resumen_estatico(update, context)
+
+    # 3. Mostrar resumen final
+    resumen_final = construir_resumen_parcial(context)
+    mensaje_resumen = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"<b>FONPESCA - Sistema de Reportes de Alertas Tempranas</b>\n\n{resumen_final}",
+        parse_mode="HTML"
+    )
+    context.user_data["resumen_id"] = mensaje_resumen.message_id
+
+    # 4. Mostrar botones finales
+    botones = [
+        [InlineKeyboardButton("✅ Enviar reporte", callback_data="enviar_reporte")],
+        [InlineKeyboardButton("✏️ Modificar", callback_data="modificar_reporte")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_reporte")]
+    ]
+    reply_markup_final = InlineKeyboardMarkup(merge_keyboard_with_navigation(botones))
+
+    mensaje_botones = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="¿Desea enviar el reporte o realizar modificaciones?",
+        reply_markup=reply_markup_final
+    )
+    context.user_data["mensaje_botones_finales_id"] = mensaje_botones.message_id
+
+    # 5. Eliminar estado de resumen del historial
+    try:
+        eliminar_estado_del_historial(context, ESTADO_RESUMEN)
+    except Exception:
+        pass
+
+    return ESTADO_RESUMEN
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_TIPO_EVENTO >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_tipo_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja el tipo de evento para reportes operacionales (Verde, Amarillo, Naranja)."""
+    
+    # 🚨 NOTA: La lógica de 'verificar_modificacion' al inicio ya maneja los casos iniciales.
+    # Esta función está más diseñada para los handlers de texto.
+    # La quitaremos para simplificar, confiando en que tu handler de 'ESTADO_MODIFICAR' la maneja.
+    
+    # 📥 Determinar origen del mensaje
+    message_to_reply = update.callback_query.message if update.callback_query else update.message
+
+    # --- 1. Lógica cuando viene de BOTÓN (callback_query) ---
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+
+        if query.data in ["otros", "otro_operacional"]:
+            await message_to_reply.reply_text(
+                "Por favor, describe manualmente el tipo de evento:",
+                reply_markup=InlineKeyboardMarkup(merge_keyboard_with_navigation([]))
+            )
+            eliminar_estado_del_historial(context, ESTADO_TIPO_EVENTO)
+            return ESTADO_TIPO_EVENTO # Vuelve a esperar la respuesta en el mismo estado
+
+        context.user_data["tipo_evento"] = query.data.replace("_", " ").capitalize()
+        
+        # 🔑 CLAVE: Actualizar y luego decidir el flujo (Modificación vs. Normal)
+
+        await actualizar_resumen_estatico(update, context)
+        await borrar_pregunta_anterior(context, update) # Borrar la pregunta del Tipo de Evento
+
+        # >>> CORRECCIÓN DE FLUJO CRÍTICA para botones <<<
+        if context.user_data.get("en_modo_modificacion"):
+            context.user_data['campo_a_modificar'] = 'tipo_evento' # Fija el campo
+            return await manejar_post_modificacion(update, context)
+        # >>> Fin CORRECCIÓN DE FLUJO CRÍTICA <<<
+        
+        # Flujo Normal: Guardar en historial y avanzar
+        guardar_en_historial(context, ESTADO_TIPO_EVENTO)
+
+        # Pregunta siguiente: Descripción
+        mensaje_pregunta = await message_to_reply.reply_text(
+            "Por favor, ingresa la descripción del evento:",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+        )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+        
+        # El estado de destino depende del tipo de reporte para la siguiente pregunta
+        destino = ESTADO_DESCRIPCION if context.user_data.get("tipo_reporte") == "operacional" else ESTADO_DESCRIPCION_COMUNICACIONAL
+        return destino
+
+    # --- 2. Lógica cuando viene de TEXTO LIBRE (respuesta de 'otros') ---
+    elif update.message:
+        context.user_data["tipo_evento"] = update.message.text.strip()
+        
+        # 🔑 CLAVE: Actualizar y luego decidir el flujo (Modificación vs. Normal)
+        await actualizar_resumen_estatico(update, context)
+        await borrar_pregunta_anterior(context, update) # Borrar la pregunta del Tipo de Evento
+        
+        # >>> CORRECCIÓN DE FLUJO CRÍTICA para texto libre <<<
+        if context.user_data.get("en_modo_modificacion"):
+            context.user_data['campo_a_modificar'] = 'tipo_evento' # Fija el campo
+            return await manejar_post_modificacion(update, context)
+        # >>> Fin CORRECCIÓN DE FLUJO CRÍTICA <<<
+        
+        # Flujo Normal: Guardar en historial y avanzar
+        guardar_en_historial(context, ESTADO_TIPO_EVENTO)
+        
+        # Pregunta siguiente: Descripción
+        mensaje_pregunta = await update.message.reply_text(
+            "Por favor, ingresa la *descripción del evento:*",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion()),
+            parse_mode="Markdown"
+        )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+        
+        # El estado de destino depende del tipo de reporte para la siguiente pregunta
+        destino = ESTADO_DESCRIPCION if context.user_data.get("tipo_reporte") == "operacional" else ESTADO_DESCRIPCION_COMUNICACIONAL
+        return destino
+    
+    # En caso de que no haya mensaje ni callback (ej: un error)
+    return ConversationHandler.END
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_RECURSOS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def manejar_recursos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja los recursos comprometidos y avanza a las acciones tomadas."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("recursos", None)
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["recursos"] = texto
+
+    
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except telegram.error.BadRequest as e:
+                # Ignorar específicamente el error "Message to delete not found" (código 400 Bad Request)
+                if "message to delete not found" not in str(e).lower():
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+
+        guardar_en_historial(context, ESTADO_RECURSOS)
+
+        # 📝 Pregunta siguiente: acciones tomadas
+        mensaje_pregunta = await update.message.reply_text(
+            "📝 Por favor, ingresa las **acciones tomadas**:",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion()),
+            parse_mode='Markdown'
+        )
+        context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+
+        eliminar_estado_del_historial(context, ESTADO_RECURSOS)
+        return ESTADO_ACCIONES
+
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_ACCIONES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+async def manejar_acciones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja las acciones tomadas y transita al estado de violencia o verificación según el nivel."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("acciones", None)
+        context.user_data['campo_a_modificar'] = 'acciones' 
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["acciones"] = texto
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+  
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except telegram.error.BadRequest as e:
+                # Ignorar específicamente el error "Message to delete not found" (código 400 Bad Request)
+                if "message to delete not found" not in str(e).lower():
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_ACCIONES)
+
+        # 🔀 Flujo según nivel
+        nivel = context.user_data.get("nivel", "").lower()
+
+        keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        if nivel == "verde":
+            context.user_data["violencia"] = "No"
+            context.user_data["amenaza_vida"] = "No"
+            await update.message.reply_text("¿El evento está verificado?", reply_markup=reply_markup)
+            eliminar_estado_del_historial(context, ESTADO_ACCIONES)
+            return ESTADO_VERIFICADO
+        else:
+            await update.message.reply_text("¿Hubo violencia?", reply_markup=reply_markup)
+            eliminar_estado_del_historial(context, ESTADO_ACCIONES)
+            return ESTADO_VIOLENCIA
+
+
+
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ESTADO_ACCIONES_TOMADAS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_acciones_tomadas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja las acciones tomadas y muestra la siguiente pregunta de verificación."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("acciones_tomadas", None)
+        context.user_data['campo_a_modificar'] = 'fecha_publicacion' 
+
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+    context.user_data["acciones_tomadas"] = texto
+
+    # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    if context.user_data.get("en_modo_modificacion"):
+            
+            # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+            if update.message:
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    # Si esto falla, verifica los permisos del bot en el chat.
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                    
+            # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+            return await manejar_post_modificacion(update, context)
+        
+    else:
+            # ➡️ Flujo NORMAL:
+            
+            # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_ACCIONES)
+
+    # ✅ Pregunta siguiente: verificación
+    mensaje_pregunta = await update.message.reply_text(
+        "¿El evento está verificado?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]
+        ])
+    )
+    context.user_data["pregunta_id"] = mensaje_pregunta.message_id
+
+    eliminar_estado_del_historial(context, ESTADO_ACCIONES)
+    return ESTADO_VERIFICADO
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< CONFIRMAR_Y_ENVIAR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def confirmar_y_enviar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Confirma el envío del reporte, muestra el resumen final y ofrece reiniciar."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+
+    try:
+        # 🧹 Eliminar resumen anterior si existe
+        resumen_id = context.user_data.pop("resumen_id", None)
+        if resumen_id:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=resumen_id)
+
+        # 🧾 Generar número de reporte y resumen
+        numero_reporte = generar_numero_reporte(context)
+        context.user_data["numero_reporte"] = numero_reporte
+
+        from handlers.utils import construir_resumen_parcial
+        resumen_final = construir_resumen_parcial(context)
+
+        # ✅ Enviar resumen final
+        await query.message.reply_text(
+            f"✅ ¡Reporte enviado exitosamente!\n\n"
+            f"<b>Número de Reporte:</b> {numero_reporte}\n\n"
+            f"{resumen_final}",
+            parse_mode="HTML"
+        )
+
+        # 🔁 Preguntar si desea iniciar otro reporte
+        keyboard = [
+            [InlineKeyboardButton("✅ Sí", callback_data="si_otro_reporte")],
+            [InlineKeyboardButton("❌ No", callback_data="no_otro_reporte")]
+        ]
+        reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="¿Desea realizar otro reporte?",
+            reply_markup=reply_markup
+        )
+
+    except Exception as e:
+        import traceback
+        logger.error(f"❌ Error al enviar el reporte: {e}\n{traceback.format_exc()}")
+        await query.message.reply_text("❌ Ocurrió un error al enviar el reporte. Por favor, intenta de nuevo.")
+
+    return ESTADO_REINICIAR
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< CANCELAR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancela la conversación y limpia el contexto."""
+
+    # 🧹 Mensaje de cierre
+    await update.message.reply_text(
+        "❌ Conversación cancelada.\nPuedes iniciar un nuevo reporte en cualquier momento.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+    # 🧼 Limpieza completa del contexto
+    context.user_data.clear()
+
+    return ConversationHandler.END
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< manejar_verificacion_verde_op >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_verificacion_verde_op(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la verificación del reporte de Alerta Verde Operacional y dirige a la etapa de multimedia/observaciones."""
+
+    query = update.callback_query
+    await query.answer()
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data['reporte'].pop("verificado", None)
+        context.user_data['campo_a_modificar'] = 'verificado' 
+
+
+    # 🧭 Guardar estado en historial si no está presente
+    if "history_stack" not in context.user_data:
+        context.user_data["history_stack"] = []
+    if not context.user_data["history_stack"] or context.user_data["history_stack"][-1] != ESTADO_NIVEL:
+        context.user_data["history_stack"].append(ESTADO_NIVEL)
+
+    # 📝 Capturar respuesta
+    context.user_data["reporte"]["verificado"] = query.data
+    logger.info(f"Reporte de {context.user_data['reporte']['nivel_alerta']} - Verificado: {query.data}")
+
+    # 📦 Solicitud de observaciones/multimedia
+    keyboard = [[InlineKeyboardButton("✅ Continuar sin multimedia", callback_data="continuar_sin_multimedia")]]
+    reply_markup = InlineKeyboardMarkup(merge_keyboard_with_navigation(keyboard))
+
+    await query.message.reply_text(
+        "📝 **Observaciones / Multimedia Opcional:**\n\n"
+        "Si desea añadir **observaciones** (texto), por favor escríbalas y envíelas ahora. Después podrá adjuntar fotos, videos o documentos.\n\n"
+        "Cuando esté listo, pulse **'Continuar sin multimedia'** para ir al resumen, o simplemente envíe sus archivos.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+    eliminar_estado_del_historial(context, ESTADO_OBSERVACIONES)
+    return ESTADO_ESPERANDO_MULTIMEDIA
+
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< FECHA Y HORA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Mantendré el nombre de la función que tienes para no romper tus referencias
+async def manejar_webapp_fecha_hora(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe la fecha y hora desde el WebApp y la guarda en el contexto."""
+
+    try:
+        # 🔐 Activar modo modificación si aplica
+        if context.user_data.get("pregunta_modificacion_id"):
+            context.user_data["en_modo_modificacion"] = True
+            context.user_data.pop("fecha_publicacion", None)
+            context.user_data.pop("hora_publicacion", None)
+
+        # 📥 Obtener datos del WebApp
+        datos = update.message.web_app_data.data.strip()
+        logger.info(f"Datos recibidos de WebApp: {datos}")
+
+        partes = datos.split(" - ")
+        if len(partes) == 2:
+            fecha, hora = partes
+        else:
+            logger.warning(f"Formato de fecha/hora incorrecto: {datos}")
+            fecha = datetime.now().strftime("%d %b %Y")
+            hora = datetime.now().strftime("%I:%M %p")
+
+        context.user_data["fecha_publicacion"] = fecha
+        context.user_data["hora_publicacion"] = hora
+
+        # 📋 Actualizar resumen y limpiar pregunta anterior
+        await actualizar_resumen_estatico(update, context)
+        await borrar_pregunta_anterior(context, update)
+
+        # 🧼 Guardar en historial solo si no es modificación
+        if not context.user_data.get("en_modo_modificacion"):
+            guardar_en_historial(context, ESTADO_OBSERVACIONES)
+
+        # 👥 Pregunta siguiente: actores clave
+        mensaje = await update.effective_chat.send_message(
+            "👥 Por favor, ingresa los actores clave involucrados:",
+            reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+        )
+        context.user_data["pregunta_id"] = mensaje.message_id
+        eliminar_estado_del_historial(context, ESTADO_OBSERVACIONES)
+
+        return ESTADO_ACTORES_CLAVE
+
+    except AttributeError:
+        logger.error("WebApp cerró sin enviar datos o llegaron incompletos (AttributeError).")
+        await update.effective_chat.send_message(
+            "⚠️ No se recibió la fecha/hora. Por favor, asegúrese de presionar 'Confirmar' e intente seleccionarla nuevamente."
+        )
+        eliminar_estado_del_historial(context, ESTADO_OBSERVACIONES)
+        return ESTADO_FECHA_PUBLICACION
+
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Error inesperado al manejar datos de WebApp: {e}\n{error_trace}")
+        await update.effective_chat.send_message(
+            "❌ Ocurrió un error inesperado al procesar la fecha. Intentaremos de nuevo."
+        )
+        eliminar_estado_del_historial(context, ESTADO_OBSERVACIONES)
+        return ESTADO_FECHA_PUBLICACION
+
+WEBAPP_FECHA_URL = "https://selector-fecha-hora-bot-rat.vercel.app/" 
+
+def generar_teclado_fecha_publicacion() -> InlineKeyboardMarkup:
+    """Genera el teclado con el botón que lanza la WebApp."""
+
+    botones = [
+        # 1. Botón de la WebApp. Usa el parámetro 'web_app' y 'WebAppInfo'.
+        [InlineKeyboardButton("📅 Seleccionar Fecha y Hora", web_app=WebAppInfo(url=WEBAPP_FECHA_URL))],
+    ]
+    
+    # 2. Agregar navegación si es necesario (asumo que tienes una función para esto)
+    # Ejemplo:
+    # from .utils import crear_botones_navegacion 
+    # botones.extend(crear_botones_navegacion()) 
+    
+    return InlineKeyboardMarkup(botones)
+
+
+async def preguntar_fecha_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Función que lanza la pregunta al usuario."""
+    
+    # [Si el bot necesita borrar mensajes anteriores, colócalo aquí]
+
+    await update.effective_chat.send_message(
+        "🗓 Por favor, selecciona la fecha y hora de publicación usando la herramienta:",
+        reply_markup=generar_teclado_fecha_publicacion()
+    )
+    
+    return ESTADO_FECHA_PUBLICACION # Mantiene el estado esperando la respuesta
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ACTORES CLAVES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def manejar_actores_clave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja los actores clave y transita según tipo y nivel de reporte."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("actores_clave", None)
+        # CLAVE: Identificar el campo modificado para manejar_post_modificacion
+        context.user_data['campo_a_modificar'] = 'actores_clave' 
+
+    if update.message and update.message.text:
+        
+        # <--- APROXIMADAMENTE AQUÍ ESTABA LA LÍNEA 1659 ORIGINAL QUE FALLABA --->
+        texto = update.message.text.strip() # Ahora es seguro usar .strip()
+        
+        # 1. Validación de entrada de texto (Si la tienes)
+        if len(texto) < 3: 
+            await update.message.reply_text("El campo de actores clave es muy corto. Por favor, ingrese una descripción más detallada.")
+            return ESTADO_ACTORES_CLAVE
+
+        # 2. Guardar datos
+        context.user_data["actores_clave"] = texto
+
+   # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+
+    # 🔑 5. Bifurcación CLAVE: Flujo de Modificación vs. Flujo Normal
+    if context.user_data.get("en_modo_modificacion"):
+        
+        # 🗑️ CORRECCIÓN CRÍTICA: Eliminar el mensaje actual del usuario (SOLUCIÓN DE LA PREGUNTA PERSISTENTE)
+        if update.message:
+            try:
+                await update.message.delete()
+            except telegram.error.BadRequest as e:
+                # Ignorar específicamente el error "Message to delete not found" (código 400 Bad Request)
+                if "message to delete not found" not in str(e).lower():
+                    print(f"Error al intentar borrar el mensaje de usuario: {e}")
+            except Exception as e:
+                print(f"Error al intentar borrar el mensaje de usuario: {e}")
+                
+        # ✅ Flujo de MODIFICACIÓN: Llama al post-manejador para limpiar banderas y pedir la confirmación.
+        return await manejar_post_modificacion(update, context)
+    
+    else:
+        # ➡️ Flujo NORMAL:
+        
+        # 5a. Guardar en historial (para el botón 'Volver')
+        guardar_en_historial(context, ESTADO_ACTORES_CLAVE)
+            
+        # 5b. 🔀 Flujo según tipo y nivel
+        tipo = context.user_data.get("tipo_reporte", "").lower()
+        nivel = context.user_data.get("nivel", "").lower()
+
+        if tipo == "operacional":
+            if nivel == "verde":
+                mensaje = await update.message.reply_text(
+                    "✅ Por favor, ingresa las **acciones tomadas**:",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+                )
+                context.user_data["pregunta_id"] = mensaje.message_id
+                # El estado se guarda antes. Solo se retorna el nuevo estado.
+                return ESTADO_ACCIONES
+
+            elif nivel in ["amarilla", "naranja"]:
+                mensaje = await update.message.reply_text(
+                    "📦 Por favor, ingresa los **recursos comprometidos**:",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+                )
+                context.user_data["pregunta_id"] = mensaje.message_id
+                # El estado se guarda antes. Solo se retorna el nuevo estado.
+                return ESTADO_RECURSOS
+
+            elif nivel == "roja":
+                keyboard = [[InlineKeyboardButton("✅ Sí", callback_data="si"), InlineKeyboardButton("❌ No", callback_data="no")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                mensaje = await update.message.reply_text("¿Hubo **violencia**?", parse_mode='Markdown', reply_markup=reply_markup)
+                context.user_data["pregunta_id"] = mensaje.message_id
+                # El estado se guarda antes. Solo se retorna el nuevo estado.
+                return ESTADO_VIOLENCIA
+
+        elif tipo == "comunicacional":
+            mensaje = await update.message.reply_text(
+                "📰 Por favor, ingresa el **contenido difundido**:",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+            )
+            context.user_data["pregunta_id"] = mensaje.message_id
+            # El estado se guarda antes. Solo se retorna el nuevo estado.
+            return ESTADO_CONTENIDO_DIFUNDIDO
+
+        # ⚠️ Fallback si no se reconoce el flujo
+        await update.message.reply_text("⚠️ No se pudo determinar el flujo. Intenta de nuevo.")
+        eliminar_estado_del_historial(context, ESTADO_ACTORES_CLAVE)
+        return ESTADO_VERIFICADO
+    
+
+ #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< fecha >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+async def preguntar_fecha_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Solicita al usuario que ingrese manualmente la fecha y hora del evento."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("fecha_publicacion", None)
+        context.user_data.pop("hora_publicacion", None)
+
+    # 🧹 Limpiar pregunta anterior y actualizar resumen
+    await borrar_pregunta_anterior(context, update)
+    await actualizar_resumen_estatico(update, context)
+
+    # 🗓️ Pregunta de fecha/hora
+    mensaje = await update.effective_chat.send_message(
+        "🗓️ *Por favor, escribe la fecha y hora del evento en este formato exacto:*\n\n"
+        "`27/10/2025 11:00 AM`\n\n"
+        "✅ Asegúrate de incluir el espacio entre la fecha y la hora, y usar AM o PM en mayúsculas.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+    )
+    context.user_data["pregunta_id"] = mensaje.message_id
+
+    return ESTADO_FECHA_PUBLICACION
+
+async def manejar_fecha_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Procesa la fecha y hora ingresadas manualmente, y transita a actores clave."""
+
+    # 🔐 Activar modo modificación si aplica
+    if context.user_data.get("pregunta_modificacion_id"):
+        context.user_data["en_modo_modificacion"] = True
+        context.user_data.pop("fecha_publicacion", None)
+        context.user_data.pop("hora_publicacion", None)
+        context.user_data['campo_a_modificar'] = 'fecha_publicacion' 
+    # 📝 Capturar texto
+    texto = update.message.text.strip()
+
+    try:
+        fecha_hora = datetime.strptime(texto, "%d/%m/%Y %I:%M %p")
+        context.user_data["fecha_publicacion"] = fecha_hora.strftime("%d/%m/%Y")
+        context.user_data["hora_publicacion"] = fecha_hora.strftime("%I:%M %p")
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ *Formato inválido.* Por favor, usa este formato exacto:\n\n"
+            "`27/10/2025 11:00 AM`\n\n"
+            "Incluye el espacio entre fecha y hora, y usa AM o PM en mayúsculas.",
+            parse_mode="Markdown"
+        )
+        eliminar_estado_del_historial(context, ESTADO_FECHA_PUBLICACION)
+        return ESTADO_FECHA_PUBLICACION
+
+   # 📋 Actualizar resumen y limpiar pregunta anterior
+    await actualizar_resumen_estatico(update, context)
+    await borrar_pregunta_anterior(context, update)
+
+    # 🔑 CLAVE: La condición para evitar guardar el estado temporal y redirigir
+    if context.user_data.get("en_modo_modificacion"):
+        # Flujo de Modificación: NO guarda en historial. 
+        # Llama a la función que limpia la bandera y pide confirmación.
+        return await manejar_post_modificacion(update, context)
+    else:
+        # Flujo Normal: Guarda en historial y avanza al siguiente estado (Actores Clave)
+        guardar_en_historial(context, ESTADO_FECHA_PUBLICACION)
+    
+    # 👥 Pregunta siguiente: actores clave
+    mensaje = await update.message.reply_text(
+        "👥 Por favor, ingrese los actores clave:",
+        reply_markup=InlineKeyboardMarkup(crear_botones_navegacion())
+    )
+    context.user_data["pregunta_id"] = mensaje.message_id
+
+    eliminar_estado_del_historial(context, ESTADO_FECHA_PUBLICACION)
+    return ESTADO_ACTORES_CLAVE

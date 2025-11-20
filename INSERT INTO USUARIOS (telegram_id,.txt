@@ -1,0 +1,56 @@
+INSERT INTO USUARIOS (telegram_id, nombre, cedula, rol, estado, autorizado)
+VALUES (0, 'Jaen', '21346182', 'Coordinador', 'caracas', TRUE);
+
+-- Crear el tipo ENUM para el nivel de alerta
+	CREATE TYPE nivel_alerta_enum AS ENUM('Amarilla', 'Verde', 'Roja','Naranja');
+
+-- Crear la tabla de Usuarios (con id y telegram_id)
+CREATE TABLE USUARIOS (
+    id SERIAL PRIMARY KEY,
+    telegram_id BIGINT UNIQUE NOT NULL,
+    nombre VARCHAR(50) NOT NULL,
+    cedula VARCHAR(50) UNIQUE NOT NULL,
+    rol VARCHAR(30),
+    estado VARCHAR(50),
+    autorizado BOOLEAN NOT NULL
+);
+
+-- Crear la tabla para Reportes Operacionales
+CREATE TABLE reportes_operacionales (
+    id_reporte SERIAL PRIMARY KEY,
+    cedula_usuario VARCHAR(50),
+    fecha_hora TIMESTAMP NOT NULL,
+    nivel_alerta nivel_alerta_enum NOT NULL,
+    tipo_evento VARCHAR(50) NOT NULL,
+    descripcion_tecnica TEXT NOT NULL,
+    recursos_comprometidos TEXT,
+    acciones_ejecutadas TEXT,
+    observaciones TEXT,
+    codigo_reporte VARCHAR(50) UNIQUE NOT NULL,
+    amenaza_a_la_vida BOOLEAN,
+    incluye_violencia BOOLEAN,
+    confirmacion_veracidad BOOLEAN,
+	recursos_multimedia text,
+    FOREIGN KEY (cedula_usuario) REFERENCES USUARIOS(cedula)
+);
+
+-- Crear la tabla para Reportes Comunicacionales
+CREATE TABLE reportes_comunicacionales (
+    id_reporte SERIAL PRIMARY KEY,
+    cedula_usuario VARCHAR(50),
+    fecha_hora TIMESTAMP NOT NULL,
+    nivel_alerta nivel_alerta_enum NOT NULL,
+    tipo_evento VARCHAR(100) NOT NULL,
+    tipo_medio VARCHAR(100) NOT NULL,
+    medio_especifico VARCHAR(100),
+    contenido_difundido TEXT NOT NULL,
+    audiencia_afectada VARCHAR(200),
+    mensaje_verificado BOOLEAN,
+    observaciones TEXT,
+    codigo_reporte VARCHAR(50) UNIQUE NOT NULL,
+    amenaza_a_la_vida BOOLEAN,
+    incluye_violencia BOOLEAN,
+    confirmacion_veracidad BOOLEAN,
+	recursos_multimedia text,
+    FOREIGN KEY (cedula_usuario) REFERENCES USUARIOS(cedula)
+);

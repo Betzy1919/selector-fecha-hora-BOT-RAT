@@ -1,0 +1,91 @@
+CALLBACK_INICIO = 'callback_inicio'
+CALLBACK_ANTERIOR = 'callback_anterior' 
+CALLBACK_FINALIZAR = 'callback_finalizar'
+CALLBACK_ENVIAR_REPORTE = 'confirmar_envio'
+CALLBACK_MODIFICAR_REPORTE = 'modificar_reporte'
+CALLBACK_CANCELAR_REPORTE = 'cancelar_reporte'
+MAX_ARCHIVOS = 5
+ESTADO_MULTIMEDIA = 10
+
+ESTADO_FECHA_PUBLICACION = range(1)[0] + 100  
+CHAT_IDS_POR_TIPO = {
+    "operacional": [5750272384],         
+    "comunicacional": [8476200980]       
+}
+CONTACTOS_POR_TIPO = {
+    "operacional": {
+        "nombre": "Director de Operaciones",
+        "telefono": "+58 412-000-0001"
+    },
+    "comunicacional": {
+        "nombre": "Coordinadora de Comunicaciones",
+        "telefono": "+58 412-000-0002"
+    }
+}
+
+# --- Definir estados de la conversación ---
+
+
+
+(
+    # --- CONSTANTES DE NAVEGACIÓN ---
+
+    CALLBACK_INICIO,
+    CALLBACK_FINALIZAR,
+    CALLBACK_ANTERIOR,
+
+# Estados del ConversationHandler
+
+    ESTADO_CEDULA,
+    ESTADO_NIVEL,
+    ESTADO_TIPO_REPORTE,
+    ESTADO_TIPO_EVENTO,
+    ESTADO_DESCRIPCION,
+    ESTADO_RECURSOS,
+    ESTADO_ACCIONES,
+    ESTADO_VERIFICADO,
+    ESTADO_VIOLENCIA,
+    ESTADO_AMENAZA,
+    ESTADO_OBSERVACIONES,
+    ESTADO_ESPERANDO_MULTIMEDIA,
+
+# Estados para flujo comunicacional
+
+    ESTADO_TIPO_EVENTO_COMUNICACIONAL,
+    ESTADO_DESCRIPCION_COMUNICACIONAL,
+    ESTADO_TIPO_MEDIO,
+    ESTADO_MEDIO_ESPECIFICO,
+    ESTADO_CONTENIDO_DIFUNDIDO,
+    ESTADO_AUDIENCIA_AFECTADA,
+    ESTADO_NOMBRE_MEDIO,
+    ESTADO_ACTORES_CLAVE,
+
+        
+# Estados para flujo operacional
+    
+    ESTADO_DESCRIPCION_EVENTO,
+    ESTADO_ACCION_INMEDIATA,
+    ESTADO_ACCIONES_TOMADAS,
+    ESTADO_RECURSOS_COMPROMETIDOS,
+
+# Estados para alerta roja
+
+    ESTADO_TIPO_EVENTO_TEXTO_ROJA,
+    ESTADO_TIPO_EVENTO_ROJA,
+
+
+# Estados especiales
+
+    ESTADO_RESUMEN,
+    ESTADO_MODIFICAR,
+    ESTADO_REINICIAR,
+    ESTADO_CONFIRMACION_MODIFICACION,
+    ESTADO_VERDE_OP_DESC,
+    ESTADO_VERDE_OP_ACCIONES,
+    ESTADO_VERDE_OP_VERIFICACION,
+    ESTADO_SELECCION_FECHA,
+    ESTADO_SELECCION_HORA,
+    ESTADO_ESPERANDO_FECHA_HORA
+
+
+) = range(39)
