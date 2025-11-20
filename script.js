@@ -70,14 +70,15 @@ function inicializarMainButton() {
             // 1. Enviar los datos.
             Telegram.WebApp.sendData(JSON.stringify(payload));
             
-            document.getElementById("seleccion").textContent = "✅ Enviando datos... Cerrando WebApp...";
+            document.getElementById("seleccion").textContent = "✅ DATOS ENVIADOS. ESPERANDO CIERRE (3 Segundos)...";
 
             Telegram.WebApp.MainButton.hideProgress();
+            Telegram.WebApp.MainButton.hide(); // Ocultamos el botón para evitar más clics
             
-            // 2. 🔑 CLAVE 2: Retraso de 1.5 segundos CRUCIAL para la App nativa de Telegram
+            // 3. 🔑 RETRASO EXTREMO: 3 segundos.
             setTimeout(() => {
                 Telegram.WebApp.close();
-            }, 1500); 
+            }, 3000);
 
         });
     }
@@ -102,3 +103,4 @@ function inicializar() {
 
 // Inicia todo al cargar el contenido de la página
 document.addEventListener("DOMContentLoaded", inicializar);
+
