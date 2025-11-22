@@ -1,0 +1,48 @@
+body {
+    /* Usa los colores de tema de Telegram */
+    background-color: var(--tg-theme-bg-color, #ffffff); 
+    color: var(--tg-theme-text-color, #000000); 
+    font-family: sans-serif;
+    padding: 20px;
+    margin: 0;
+    text-align: center;
+}
+
+/* Contenedor del campo */
+.input-container {
+    margin-bottom: 25px;
+}
+
+.input-label {
+    display: block;
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--tg-theme-hint-color, #999); 
+    margin-bottom: 15px;
+}
+
+/* Estilo principal para el input nativo */
+.native-datetime-input {
+    width: 90%; 
+    max-width: 350px;
+    padding: 15px;
+    font-size: 1.2em;
+    border: 2px solid var(--tg-theme-button-color, #5ac8fa); 
+    border-radius: 12px;
+    /* Fondo para contrastar con el fondo principal */
+    background-color: var(--tg-theme-secondary-bg-color, #f0f0f0); 
+    color: var(--tg-theme-text-color, #000000);
+    text-align: center;
+    box-sizing: border-box; /* Asegura que padding no afecte el ancho total */
+}
+
+/* Estilos para el resumen/estado */
+.summary-box {
+    margin-top: 20px;
+    padding: 10px;
+    border: 1px dashed var(--tg-theme-link-color, #007aff);
+    border-radius: 8px;
+    text-align: center;
+    font-weight: 500;
+    color: var(--tg-theme-text-color, #000000);
+}

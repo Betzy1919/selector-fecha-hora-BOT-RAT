@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 {
     "headers": [
@@ -11,4 +12,19 @@
         ]
       }
     ]
+=======
+
+{
+    "headers": [
+      {
+        "source": "/(.*)",
+        "headers": [
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;"
+          }
+        ]
+      }
+    ]
+>>>>>>> ad292690a06f0e8b0b1573914a89464856d6a656
   }
