@@ -60,8 +60,14 @@
   <div class="botones">
     
     <button class="confirmar" onclick="confirmar()">Confirmar Fecha y Hora</button>
-    <button class="reset" onclick="restablecer()">Restablecer</button>
   </div>
+  <script>
+    document.getElementById("enviar").addEventListener("click", () => {
+      const fecha = document.getElementById("fecha").value;
+      const hora = document.getElementById("hora").value;
+      Telegram.WebApp.sendData(JSON.stringify({ fecha, hora }));
+    });
+  </script>
 
   <script src="script.js"></script>
 </body>
